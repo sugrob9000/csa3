@@ -1,0 +1,10 @@
+image: generic-c
+
+before_script:
+  - git clone https://github.com/Microsoft/vcpkg.git --depth=1
+  - sh ./vcpkg/bootstrap-vcpkg.sh
+  - vcpkg/vcpkg install fmt
+
+build:
+  script:
+    - echo "Hello from CI"
