@@ -7,4 +7,5 @@ before_script:
 
 build:
   script:
-    - echo "Hello from CI"
+    - cmake -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+    - cmake --build build
