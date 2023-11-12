@@ -5,7 +5,10 @@ before_script:
   - sh ./vcpkg/bootstrap-vcpkg.sh
   - vcpkg/vcpkg install fmt
 
-build:
+build-and-test:
   script:
-    - cmake -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+    - cmake -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DENABLE_CLANG_TIDY=ON
+    # Will run clang-tidy alongside, checking code quality
     - cmake --build build
+    # Run golden tests
+    - ctest --test-dir build --output-on-failure

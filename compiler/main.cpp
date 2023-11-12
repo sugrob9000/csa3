@@ -11,7 +11,7 @@ int main() {
   string_view praise[] = { "ad-hoc", "informally-specified", "bug-ridden", "slow" };
   string_view carcinization_target = "half of Common Lisp";
 
-  print("\"Any {} {} program contains an {} implementation of {}.\"\n",
+  print("Any {} {} program contains an {} implementation of {}.\n",
       qualifier,
       join(languages, " or "),
       join(praise, ", "),
