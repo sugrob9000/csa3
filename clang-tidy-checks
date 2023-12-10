@@ -3,5 +3,6 @@ clang-analyzer-*
 llvm-include-order
 performance-*
 readability-function-cognitive-complexity
--bugprone-exception-escape
 -bugprone-easily-swappable-parameters
+-bugprone-exception-escape
+-bugprone-unchecked-optional-access

@@ -8,7 +8,7 @@ namespace util {
 
 template<typename... Args>
 void println(const fmt::format_string<Args...>& fmt, Args&&... args) {
-  fmt::print(stderr, fmt, std::forward<decltype(args)>(args)...);
+  fmt::print(stderr, fmt, std::forward<Args>(args)...);
   std::fputc('\n', stderr);
   std::fflush(stderr);
 }

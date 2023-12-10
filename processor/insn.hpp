@@ -18,7 +18,7 @@ struct Value_dst {
 struct Arith_instruction {
   Value_dst dst1, dst2;
   Value_src src1, src2;
-  int dst_flag_id;
+  uint8_t dst_flag_id;
 };
 
 // Memory instruction

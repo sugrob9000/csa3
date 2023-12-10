@@ -1,2 +1,14 @@
-Any sufficiently complicated C or Fortran program contains an ad-hoc, informally-specified, bug-ridden, slow implementation of half of Common Lisp.
-Hello from a prospective Lisp compiler!
+(
+w out
+i 2
+)
+(
+w hello
+s ssddad
+(
+w l1-2-3
+)
+)
+(
+w defun
+)
