@@ -8,11 +8,15 @@ option(ENABLE_CLANG_TIDY ON)
 if(ENABLE_CLANG_TIDY)
 	find_program(clang-tidy clang-tidy REQUIRED)
 	message(STATUS "Found clang-tidy: ${clang-tidy}")
-	set(clang-tidy-checks "clang-analyzer-*,llvm-include-order,misc-*,performance-*")
+
+	file(STRINGS "clang-tidy-checks" checks)
+	list(JOIN checks "," checks)
+	message(STATUS "${checks}")
+
 	set(CMAKE_CXX_CLANG_TIDY
 		${clang-tidy}
 		-header-filter=${CMAKE_SOURCE_DIR}
-		-checks=${clang-tidy-checks}
+		-checks=${checks}
 		-warnings-as-errors=*)
 endif()
 
@@ -47,3 +51,8 @@ if(BUILD_TESTING)
 	enable_testing()
 	add_subdirectory(tester)
 endif()
+
+add_custom_target(run-proc
+	DEPENDS processor
+	COMMAND processor
+	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

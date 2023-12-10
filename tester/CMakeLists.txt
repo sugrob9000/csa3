@@ -10,7 +10,9 @@ function(create_golden_test binary name)
 		${name}-out
 		${CMAKE_CURRENT_SOURCE_DIR}/${name}-expected-out)
 
-	# Use a fixture to setup a dependency between tests
+	# Use a fixture to setup a dependency between creating the output
+	# and comparing it with the golden output
+
 	set_tests_properties(${name}-run PROPERTIES FIXTURES_SETUP ${name}-fixture)
 	set_tests_properties(${name}-compare PROPERTIES FIXTURES_REQUIRED ${name}-fixture)
 endfunction()
