@@ -6,24 +6,27 @@
 
 Token Token::from_single_char(char c) {
   switch (c) {
-  case '(': return tokens::Open{};
-  case ')': return tokens::Close{};
-  case '\'': return tokens::Quote{};
-  default: assert(!"Other single characters cannot form a complete token");
+  case '(': return tok::Open{};
+  case ')': return tok::Close{};
+  case '\'': return tok::Quote{};
+  default:
+    assert(!"Other single characters cannot form a complete token");
+    util::unreachable();
   }
 }
 
-Token Token::word(std::string name) { return tokens::Word(std::move(name)); }
-Token Token::literal_u32(uint32_t value) { return tokens::Literal_u32(value); }
-Token Token::literal_str(std::string value) { return tokens::Literal_str(std::move(value)); }
+Token Token::identifier(std::string name) { return tok::Identifier(std::move(name)); }
+Token Token::number(uint32_t value) { return tok::Number(value); }
 
 
-static bool is_word_cont_char(char c) {
+static bool is_identifier_char(char c) {
+  // Lisps are a lot laxer about what can be in an identifier.
+  // '-', '+', and many others are allowed.
   switch (c) {
-  case '"':
   case '\'':
   case '(':
   case ')':
+  case ';':
     return false;
   default:
     return std::isprint(c) && !std::isspace(c);
@@ -37,80 +40,111 @@ std::optional<char> Lexing_stream::peek() {
   return char(c);
 }
 
-void Lexing_stream::consume_char() {
+void Lexing_stream::consume_expect(char expected) {
   int c = is.get();
+  (void) expected;
   assert(c != EOF);
+  assert(c == expected);
+
   if (c == '\n')
-    loc.next_line();
+    current_location.next_line();
   else
-    loc.next_column();
+    current_location.next_column();
 }
 
 std::optional<char> Lexing_stream::peek_after_whitespace() {
+  bool in_comment = false;
+
   while (true) {
     auto c = peek();
     if (!c)
       return std::nullopt;
-    if (!std::isspace(*c))
-      return *c;
-    consume_char();
+
+    if (*c == ';')
+      in_comment = true;
+    if (*c == '\n')
+      in_comment = false;
+
+    if (!std::isspace(*c) && !in_comment)
+      return c;
+
+    consume_expect(*c);
   }
 }
 
-Token Lexing_stream::consume_word() {
-  std::string word;
+Token Lexing_stream::consume_identifier() {
+  std::string identifier;
 
   while (true) {
     auto c = peek();
-    if (!c || !is_word_cont_char(*c))
+    if (!c || !is_identifier_char(*c))
       break;
-    consume_char();
-    word.push_back(*c);
+    consume_expect(*c);
+    identifier.push_back(*c);
   }
 
-  if (std::isdigit(word[0])) {
+  // We should not have been called without knowing
+  // there's at least a 1-long identifier in the stream
+  assert(!identifier.empty());
+
+  if (std::isdigit(identifier[0])) {
     // This is an attempt at a number
     uint32_t number;
-    auto [ptr, ec] = std::from_chars(word.data(), word.data() + word.size(), number);
-    if (ec != std::errc{})
-      error(loc, "Bad integer literal '{}': {}", word, std::make_error_code(ec).message());
-    return Token::literal_u32(number);
+    auto [ptr, ec]
+      = std::from_chars(identifier.data(), identifier.data() + identifier.size(), number);
+    if (ec != std::errc{}) {
+      error(current_location, "Bad integer literal '{}': {}",
+          identifier, std::make_error_code(ec).message());
+    }
+    return Token::number(number);
   } else {
-    // This is just a word (function or binding name, etc.)
-    return Token::word(std::move(word));
+    // This is just a identifier (function or binding name, etc.)
+    return Token::identifier(std::move(identifier));
   }
-}
-
-Token Lexing_stream::consume_string() {
-  assert(*peek() == '"');
-  consume_char();
-
-  std::string literal;
-
-  while (true) {
-    auto maybe_c = peek();
-    if (!maybe_c)
-      error(loc, "Source file ended without closing string literal");
-    consume_char();
-    if (*maybe_c == '"')
-      break;
-    literal.push_back(*maybe_c);
-  }
-
-  return Token::literal_str(std::move(literal));
 }
 
 std::optional<Token> Lexing_stream::next_token() {
-  auto next_peeked = peek_after_whitespace();
-  if (!next_peeked)
+  auto peeked = peek_after_whitespace();
+  if (!peeked)
     return std::nullopt;
-  switch (*next_peeked) {
+  switch (*peeked) {
   case '(':
   case ')':
   case '\'':
-    consume_char();
-    return Token::from_single_char(*next_peeked);
-  case '"': return consume_string();
-  default: return consume_word();
+    consume_expect(*peeked);
+    return Token::from_single_char(*peeked);
+  default: return consume_identifier();
   }
+}
+
+
+void Parser::feed(Token token) {
+  using namespace ast;
+
+  if (stack.empty()) {
+    // Root context is slightly special: only calls are allowed here,
+    // so error out on anything that is not an open paren
+    token.visit(
+      [&] (tok::Open) { stack.push_back(&tree.root_expressions.emplace_back()); },
+      [] (auto&&) { error({}, "Only paren-expressions allowed at root scope"); }
+    );
+    return;
+  }
+
+  auto& children = stack.back()->children;
+
+  token.visit(
+    [&] (tok::Open) {
+      children.push_back(Node_call{});
+      stack.push_back(&children.back().as<Node_call>());
+    },
+    [&] (tok::Close) { stack.pop_back(); },
+    [] (tok::Quote) { error({}, "Quotes are unsupported yet"); },
+    [&] (const tok::Identifier& identifier) {
+      children.push_back(Node_identifier(identifier.name));
+    },
+    [&] (const tok::Number& number) {
+      children.push_back(Node_number(number.value));
+    }
+  );
 }

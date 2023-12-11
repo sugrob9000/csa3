@@ -4,91 +4,76 @@
 
 #pragma once
 #include "util.hpp"
-#include <cassert>
 #include <cstdint>
 #include <iosfwd>
 #include <optional>
 #include <string>
-#include <variant>
 #include <vector>
 
-namespace tokens {
+namespace tok {
 
 struct Open {};
 struct Close {};
 struct Quote {};
 
-struct Word { std::string name; };
-struct Literal_u32 { uint32_t value; };
-struct Literal_str { std::string value; };
+struct Identifier { std::string name; };
+struct Number { uint32_t value; };
 
-using Any = std::variant<
-  tokens::Open,
-  tokens::Close,
-  tokens::Quote,
-  tokens::Word,
-  tokens::Literal_u32,
-  tokens::Literal_str
->;
+using Any = util::Variant<Open, Close, Quote, Identifier, Number>;
 
-} // namespace tokens
+} // namespace tok
 
-class Token: tokens::Any {
-  using tokens::Any::Any;
+class Token: tok::Any {
+  using tok::Any::Any;
 public:
-  template<typename T> bool is() const {
-    return std::holds_alternative<T>(*this);
-  }
-
-  template<typename T> T& as() {
-    assert(is<T>());
-    return std::get<T>(*this);
-  }
-
+  using tok::Any::visit, tok::Any::is, tok::Any::as;
   static Token from_single_char(char);
-  static Token word(std::string);
-  static Token literal_u32(uint32_t);
-  static Token literal_str(std::string);
-
-  template<typename... Visitors>
-  decltype(auto) visit(Visitors&&... visitors) {
-    struct Overloaded_visitor: Visitors... { using Visitors::operator()...; };
-    return std::visit(
-      Overloaded_visitor{ std::forward<Visitors>(visitors)... },
-      static_cast<tokens::Any&>(*this)
-    );
-  }
+  static Token identifier(std::string);
+  static Token number(uint32_t);
 };
 
 
 class Lexing_stream {
   std::istream& is;
-  Source_location loc;
+  Source_location current_location;
 
   std::optional<char> peek();
   std::optional<char> peek_after_whitespace();
-  void consume_char();
-  Token consume_word();
+  void consume_expect(char);
+  Token consume_identifier();
   Token consume_string();
 
 public:
   explicit Lexing_stream(std::istream& is_): is(is_) {}
-
   std::optional<Token> next_token();
 };
 
 
-struct Abstract_syntax_tree {
-  struct Node {
-    std::vector<Node> children;
-  };
-  Node root;
+namespace ast {
+
+struct Node;
+
+struct Node_identifier { std::string name; };
+struct Node_number { uint32_t value; };
+struct Node_call { std::vector<Node> children; };
+using Node_any = util::Variant<Node_identifier, Node_number, Node_call>;
+
+struct Node: private Node_any {
+  using Node_any::Node_any, Node_any::as;
 };
 
-struct Parser {
-  Abstract_syntax_tree tree;
+struct Tree {
+  std::vector<Node_call> root_expressions;
+};
 
-  std::vector<Abstract_syntax_tree::Node*> stack;
+} // namespace ast
+
+struct Parser {
+  ast::Tree tree;
+
+  // `Node_call::children` can cause relocation of children, but we can only modify the
+  // node at the stack's top, so invalidation can't happen where we can't expect it
+  std::vector<ast::Node_call*> stack;
 
   void feed(Token);
 };

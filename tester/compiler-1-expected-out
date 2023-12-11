@@ -1,14 +1,14 @@
 (
-w out
-i 2
+i out
+n 2
 )
 (
-w hello
-s ssddad
+i hello
+i "ssddad"
 (
-w l1-2-3
+i l1-2-3
 )
 )
 (
-w defun
+i defun
 )

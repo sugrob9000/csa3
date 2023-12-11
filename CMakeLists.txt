@@ -28,15 +28,16 @@ function(create_executable name src-dir)
 	target_link_libraries(${name} fmt::fmt)
 
 	if(CMAKE_CXX_COMPILER_ID STREQUAL GNU)
-		set(cxx-warnings
+		target_compile_options(${name} PRIVATE
 			-Wall
 			-Wextra
 			-Wpedantic
 			-Wshadow
 			-Wattributes
 			-Wstrict-aliasing)
-		set(cxx-options ${cxx-warnings})
-		target_compile_options(${name} PRIVATE ${cxx-options})
+		if(CMAKE_BUILD_TYPE STREQUAL Debug)
+			target_compile_options(${name} PRIVATE -ggdb)
+		endif()
 	else()
 		message(WARNING "C++ compiler is not gcc, will miss some options")
 	endif()
