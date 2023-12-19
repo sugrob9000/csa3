@@ -20,12 +20,12 @@ if(ENABLE_CLANG_TIDY)
 		-warnings-as-errors=*)
 endif()
 
-find_package(fmt CONFIG REQUIRED)
+find_package(fmt 9.0.0 CONFIG REQUIRED)
 
 function(create_executable name src-dir)
 	file(GLOB_RECURSE src CONFIGURE_DEPENDS ${src-dir}/*.cpp ${src-dir}/*.hpp)
 	add_executable(${name} ${src})
-	target_link_libraries(${name} fmt::fmt)
+	target_link_libraries(${name} PRIVATE fmt::fmt)
 
 	if(CMAKE_CXX_COMPILER_ID STREQUAL GNU)
 		target_compile_options(${name} PRIVATE
@@ -52,8 +52,3 @@ if(BUILD_TESTING)
 	enable_testing()
 	add_subdirectory(tester)
 endif()
-
-add_custom_target(run-proc
-	DEPENDS processor
-	COMMAND processor
-	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
