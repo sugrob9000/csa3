@@ -64,8 +64,8 @@ Processor::Processor() {
   decoder.out_decoded = Instruction::nop();
   LOG("primed decoder output with {}", decoder.out_decoded);
 
-  // It will take two ticks before real instructions from the image
-  // begin to get executed, so pull the instruction pointer behind by two words
+  // Due to pipelining, it will take two ticks before real instructions from the
+  // image begin to execute, so pull the instruction pointer behind by two words
   executor.instruction_pointer = -8;
 }
 

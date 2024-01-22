@@ -63,6 +63,6 @@ struct Instruction {
 Instruction decode(uint32_t);
 
 template<> struct fmt::formatter<Instruction> {
-  auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
   appender format(const Instruction&, format_context& ctx);
 };

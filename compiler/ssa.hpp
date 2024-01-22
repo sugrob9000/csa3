@@ -25,9 +25,25 @@ struct Operation {
 
 struct Sequence {
   Variable output;
-  std::vector<Value> inputs;
+  std::vector<Variable> inputs;
   std::vector<Operation> operations;
-  static Sequence from_lisp_ast(ast::Tree&&);
+};
+
+class Compiler {
+  uint32_t next_variable_id = 1;
+  uint32_t allocate_variable_id();
+
+  struct Arg_requirement {
+    enum class Type { at_least, exactly } type;
+    unsigned how_many;
+  };
+
+  struct Function {
+    Arg_requirement arg_requirement;
+  };
+
+public:
+  Sequence compile_lisp_call(ast::Node_call&&);
 };
 
 } // namespace ssa
