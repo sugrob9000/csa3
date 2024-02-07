@@ -34,7 +34,6 @@ public:
 };
 
 
-// Polyfill for `std::unreachable` until C++23
 [[noreturn]] inline void unreachable() { __builtin_unreachable(); }
 
 } // namespace util

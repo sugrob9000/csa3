@@ -1,0 +1,1 @@
+(while t (write (read))

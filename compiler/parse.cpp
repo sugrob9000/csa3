@@ -1,5 +1,5 @@
-#include "ast.hpp"
-#include "compiler.hpp"
+#include "diag.hpp"
+#include "parse.hpp"
 #include "util.hpp"
 #include <charconv>
 #include <cstdint>
@@ -13,27 +13,18 @@ struct Open_token {};
 struct Close_token {};
 struct Identifier_token { std::string name; };
 struct Number_token { int32_t value; };
+struct String_token { std::string value; };
 
-using Any_token = util::Variant<
+using Token = util::Variant<
   Open_token,
   Close_token,
   Identifier_token,
-  Number_token
+  Number_token,
+  String_token
 >;
 
-class Token: Any_token {
-  Source_location location_;
-public:
-  using Any_token::match, Any_token::is, Any_token::as;
-
-  Token(Any_token&& base, Source_location loc):
-    Any_token(std::move(base)), location_(loc) {}
-
-  Source_location location() const { return location_; }
-};
-
 bool is_identifier_char(char c) {
-  if (c == '(' || c == ')' || c == ';')
+  if (c == '(' || c == ')' || c == ';' || c == '"')
     return false;
   // Other than the special characters, Lisps are a lot laxer about what
   // can be in an identifier. '-', '+', and many others are allowed.
@@ -42,7 +33,6 @@ bool is_identifier_char(char c) {
 
 class Lexer {
   std::istream& is;
-  Source_location location;
 
   std::optional<char> peek() {
     int c = is.peek();
@@ -58,10 +48,6 @@ class Lexer {
     (void) expected;
     assert(c != -1);
     assert(c == expected);
-    if (c == '\n')
-      location = location.next_line();
-    else
-      location = location.next_column();
   }
 
   std::optional<char> peek_after_whitespace() {
@@ -83,7 +69,7 @@ class Lexer {
     }
   }
 
-  // A multichar token is either an identifier or a number. There are no string literals.
+  // A multichar token is either an identifier or a number
   Token consume_multichar() {
     std::string word;
     while (true) {
@@ -106,15 +92,33 @@ class Lexer {
       int32_t number;
       auto [ptr, ec] = std::from_chars(word.data(), word.data() + word.size(), number);
       if (ec != std::errc{}) {
-        error(location, "Bad integer literal '{}'. charconv says '{}'",
+        error("Bad integer literal '{}'. charconv says '{}'",
             word, std::make_error_code(ec).message());
       }
 
-      return { Number_token(number), location };
+      return Number_token(number);
     } else {
       // This is just a identifier (function or binding name, etc.)
-      return { Identifier_token(std::move(word)), location };
+      return Identifier_token(std::move(word));
     }
+  }
+
+  Token consume_string_literal() {
+    assert(*peek() == '"');
+    consume_expect('"');
+
+    std::string literal;
+    while (true) {
+      auto c = peek();
+      if (!c)
+        error("EOF before closing string literal");
+      consume_expect(*c);
+      if (*c == '"')
+        break;
+      literal.push_back(*c);
+    }
+
+    return String_token(std::move(literal));
   }
 
 public:
@@ -127,10 +131,12 @@ public:
     switch (*peeked) {
     case '(':
       consume_expect(*peeked);
-      return Token(Open_token{}, location);
+      return Open_token{};
     case ')':
       consume_expect(*peeked);
-      return Token(Close_token{}, location);
+      return Close_token{};
+    case '"':
+      return consume_string_literal();
     default:
       return consume_multichar();
     }
@@ -139,13 +145,13 @@ public:
 
 } // anon namespace
 
-auto ast::Tree::from_text(std::istream& is) -> Tree {
-  Tree tree;
+Ast Ast::parse_stream(std::istream& is) {
+  Ast tree;
   Lexer lexer(is);
 
-  // `Node_call::children` can cause relocation of children, but we only modify the
+  // `Parens::children` can cause relocation of children, but we only modify the
   // node at the stack's top, so invalidation can't happen where we can't expect it
-  std::vector<Node_call*> stack;
+  std::vector<Parens*> stack;
 
   while (true) {
     auto token = lexer.consume_token();
@@ -153,14 +159,10 @@ auto ast::Tree::from_text(std::istream& is) -> Tree {
       break;
 
     if (stack.empty()) {
-      // Root context is special: only calls are allowed
+      // Root context is special: only parens are allowed
       token->match(
-        [&] (Open_token) {
-          stack.push_back(&tree.root_expressions.emplace_back());
-        },
-        [&] (auto&&) {
-          error(token->location(), "At file scope, only opening parens is allowed");
-        }
+        [&] (Open_token) { stack.push_back(&tree.toplevel_exprs.emplace_back()); },
+        [&] (auto&&) { error("At file scope, only opening parens is allowed"); }
       );
       continue;
     }
@@ -169,20 +171,23 @@ auto ast::Tree::from_text(std::istream& is) -> Tree {
     auto& context = stack.back()->children;
     token->match(
       [&] (Open_token) {
-        context.emplace_back(Node_call{}, token->location());
-        auto new_top = &context.back().as<Node_call>();
+        context.emplace_back(Parens{});
+        auto new_top = &context.back().as<Parens>();
         stack.push_back(new_top);
       },
       [&] (Close_token) {
         if (context.empty())
-          error(token->location(), "Empty parens make no sense");
+          error("Empty parens make no sense");
         stack.pop_back();
       },
       [&] (Identifier_token& id) {
-        context.emplace_back(Node_binding{std::move(id.name)}, token->location());
+        context.emplace_back(Identifier{std::move(id.name)});
       },
       [&] (Number_token& num) {
-        context.emplace_back(Node_constant{num.value}, token->location());
+        context.emplace_back(Number{num.value});
+      },
+      [&] (String_token& str) {
+        context.emplace_back(String{std::move(str.value)});
       }
     );
   }

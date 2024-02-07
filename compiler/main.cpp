@@ -1,19 +1,47 @@
-#include "ast.hpp"
-#include "ssa.hpp"
+#include "compile.hpp"
+#include "parse.hpp"
 #include <fmt/core.h>
 #include <iostream>
 
-int main() {
-  auto tree = ast::Tree::from_text(std::cin);
-  fmt::print(stderr, "{} roots\n", tree.root_expressions.size());
-
-  ssa::Compiler ssa_compiler;
-
-  for (auto& expr: tree.root_expressions) {
-    auto ssa = ssa_compiler.compile_lisp_call(std::move(expr));
-    fmt::print("ssa inputs: {}, ops: {}\n",
-      ssa.inputs.size(),
-      ssa.operations.size()
+template<>
+struct fmt::formatter<ac::Value> {
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+  appender format(ac::Value& value, format_context& ctx) {
+    return value.match(
+      [&] (ac::Constant c) { return format_to(ctx.out(), "{:x}", c.value); },
+      [&] (ac::Variable_id v) { return format_to(ctx.out(), "#{}", v.id); }
     );
+  }
+};
+
+int main() {
+  auto ast = Ast::parse_stream(std::cin);
+  for (auto& expr: ast.toplevel_exprs)
+    ac::compile_parens(expr);
+
+  for (int i = 0; auto& insn: ac::get_emitted_code()) {
+    constexpr std::string_view insn_names[] = {
+      "mov", "add", "sub", "mul", "div", "mod", "jmp",
+    };
+
+    fmt::print("{:4}: ", i);
+
+    switch (insn.op) {
+      using enum ac::Operation;
+    case jump:
+      fmt::print("jmp -> {} if {}\n", insn.operand2, insn.operand1);
+      break;
+    case mov:
+      fmt::print("mov #{} <- {}\n", insn.dest.id, insn.operand1);
+      break;
+    default:
+      fmt::print("{}: #{} <- {} {}\n",
+          insn_names[static_cast<int>(insn.op)],
+          insn.dest.id,
+          insn.operand1,
+          insn.operand2);
+      break;
+    }
+    i++;
   }
 }
