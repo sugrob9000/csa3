@@ -46,6 +46,7 @@ class Lexer {
   void consume_expect(char expected) {
     int c = is.get();
     (void) expected;
+    (void) c;
     assert(c != -1);
     assert(c == expected);
   }
@@ -159,10 +160,10 @@ Ast Ast::parse_stream(std::istream& is) {
       break;
 
     if (stack.empty()) {
-      // Root context is special: only parens are allowed
+      // Root context is special: only parens can appear here
       token->match(
         [&] (Open_token) { stack.push_back(&tree.toplevel_exprs.emplace_back()); },
-        [&] (auto&&) { error("At file scope, only opening parens is allowed"); }
+        [&] (auto&&) { error("At root scope, only opening parens is allowed"); }
       );
       continue;
     }

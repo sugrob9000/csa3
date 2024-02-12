@@ -33,7 +33,7 @@ public:
   }
 };
 
-
+// polyfill std::unreachable from C++23
 [[noreturn]] inline void unreachable() { __builtin_unreachable(); }
 
 } // namespace util

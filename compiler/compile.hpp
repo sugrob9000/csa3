@@ -1,26 +1,28 @@
 #pragma once
 #include "diag.hpp"
 #include "parse.hpp"
-#include <span>
+#include <vector>
 
 // The "abstract" compiler targets an instruction set that has no concept of
-// memory, limited registers, or limited flags. Not quite SSA: we still have
-// labels and plain jumps instead of basic blocks.
-// Yes, this severely hinders lifetime analysis.
+// memory or limited registers, etc. Not quite SSA: we still have labels and
+// plain jumps instead of basic blocks. Yes, this severely hinders lifetime analysis.
 //
 // The instructions closely match the final target instruction set,
 // but they operate in abstract values, for example:
 //
 //    [val5] <- [val1] + [val2]
-// instead of
-//    [r1] <- stackframe[32]
+//
+//          instead of
+//
+//    [r1] <- mem(32)
 //    [r3] <- [r0] + [r1]
 //
 // As such, this instruction set has no loads or stores.
-// Later, a codegen pass will color the values onto registers and flags
+// A later codegen pass will color the values onto registers
 // and generate appropriate spills.
 
-namespace ac {
+namespace cc {
+
 struct Constant { int32_t value; };
 struct Variable_id { uint32_t id; };
 using Value = util::Variant<Constant, Variable_id>;
@@ -38,9 +40,10 @@ struct Instruction {
   Value operand2;
 };
 
-Value compile_node(Ast::Node&);
-Value compile_parens(Ast::Parens&);
+struct Compiler_output {
+  std::vector<Instruction> code;
+  std::vector<uint32_t> data;
+};
+Compiler_output compile(Ast&);
 
-std::span<Instruction> get_emitted_code();
-
-} // namespace ac
+} // namespace cc
