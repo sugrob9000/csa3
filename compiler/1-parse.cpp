@@ -1,5 +1,5 @@
-#include "diag.hpp"
-#include "parse.hpp"
+#include "diagnostics.hpp"
+#include "stages.hpp"
 #include "util.hpp"
 #include <charconv>
 #include <cstdint>

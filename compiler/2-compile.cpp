@@ -1,5 +1,5 @@
-#include "compile.hpp"
-#include "diag.hpp"
+#include "diagnostics.hpp"
+#include "stages.hpp"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -8,11 +8,13 @@
 namespace {
 
 struct Compiler {
+  // The eventual output of this stage
   std::vector<uint32_t> static_data;
   std::vector<Instruction> emitted_code;
 
+  // This stage liberally creates new abstract "variables"
   int next_variable_id = 0;
-  Variable_id create_variable() {
+  Variable_id new_var() {
     return Variable_id(next_variable_id++);
   }
 
@@ -20,65 +22,79 @@ struct Compiler {
   std::unordered_map<std::string_view, Variable_id> variables;
 
 
-  // We can use emit_unpatched_jump and patch_jump_to_here
-  // when creating forward jumps, for example:
-  // {
-  //   auto my_fwd_jump = emit_unpatched_jump();
-  //   emit_some_more_code();
-  //   patch_jump_to_here(my_fwd_jump);
-  // }
+  // =========================================================================
+  // Emitting single instructions.
+  // Straightforward wrappers around emitted_code.push_back(),
+  // but it's very convenient to return the destination variable
 
-  using Jump_id = size_t;
-  constexpr static int32_t unpatched_jump_magic = 0xDEAD;
-
-  Jump_id emit_unpatched_jump(Value condition = Constant(true)) {
-    size_t result = emitted_code.size();
-    emitted_code.push_back({
-      .op = Operation::jump,
-      .dest = {},
-      .operand1 = condition,
-      .operand2 = Constant(unpatched_jump_magic),
-    });
-    return result;
-  }
-
-  void patch_jump_to_here(Jump_id id) {
-    int32_t& value = emitted_code[id].operand2.as<Constant>().value;
-    assert(value == unpatched_jump_magic);
-    value = (int32_t) emitted_code.size();
-  }
-
-
-  Variable_id emit_arith(Operation op, Variable_id dest, Value operand1, Value operand2) {
+  Variable_id emit(Operation op, Variable_id dest, Value src1, Value src2) {
     emitted_code.push_back({
       .op = op,
       .dest = dest,
-      .operand1 = operand1,
-      .operand2 = operand2,
+      .src1 = src1,
+      .src2 = src2,
     });
     return dest;
   }
 
   Variable_id emit_mov(Variable_id dest, Value src) {
-    emitted_code.push_back({
-      .op = Operation::mov,
-      .dest = dest,
-      .operand1 = src,
-      .operand2 = {},
-    });
-    return dest;
+    return emit(Operation::mov, dest, src, {});
   }
+
+  // =========================================================================
+  // Emitting jumps.
+  // With forward jumps, we first emit the jump, then later its label:
+  //
+  //   auto my_fwd_jump = emit_unpatched_jump();
+  //   emit_some_more_code();
+  //   patch_jump_to_here(my_fwd_jump);
+  //
+  // With backward jumps, we first emit the label, then later the jump:
+  //
+  //   auto my_label = label_to_here();
+  //   emit_some_more_code();
+  //   emit_jump_to(my_label);
+
+  using Label = int32_t;
+  constexpr static Label unpatched_jump_magic = 0x7FFFDEAD;
+
+  Label label_to_here() {
+    return Label(emitted_code.size());
+  }
+
+  void emit_jump_to(Label label, Value condition = Constant(true)) {
+    emit(Operation::jump, {}, condition, Constant(label));
+  }
+
+  using Jump_id = size_t;
+
+  Jump_id emit_unpatched_jump(Value condition = Constant(true)) {
+    size_t result = emitted_code.size();
+    emit(Operation::jump, {}, condition, Constant(unpatched_jump_magic));
+    return result;
+  }
+
+  void patch_jump_to_here(Jump_id id) {
+    int32_t& value = emitted_code[id].src2.as<Constant>().value;
+    assert(value == unpatched_jump_magic);
+    value = label_to_here();
+  }
+
+  // =========================================================================
+  // Emitting intrinsics.
+  // They must take AST nodes and not values, because they contain logic
+  // as to what gets evaluated or not.
 
   Variable_id emit_set_variable(std::string_view name, Ast::Node& value) {
     auto [it, is_new] = variables.try_emplace(name);
     Variable_id& dest = it->second;
     if (is_new)
-      dest = create_variable();
+      dest = new_var();
     return emit_mov(dest, compile_node(value));
   }
 
   Value emit_conditional(Ast::Node& cond_expr, Ast::Node& then_expr, Ast::Node& else_expr) {
-    Variable_id result = create_variable();
+    Variable_id result = new_var();
 
     auto jump_to_else = emit_unpatched_jump(compile_node(cond_expr));
     emit_mov(result, compile_node(then_expr));
@@ -91,6 +107,88 @@ struct Compiler {
     return result;
   }
 
+  Value emit_while_loop(Ast::Node& cond_expr, Ast::Node& loop_expr) {
+    auto top = label_to_here();
+    auto inv_cond = emit(
+      Operation::equ,
+      new_var(),
+      compile_node(cond_expr),
+      Constant(0)
+    );
+    auto jump_to_end = emit_unpatched_jump(inv_cond);
+    (void) compile_node(loop_expr); // ignore the loop expression value
+    emit_jump_to(top);
+    patch_jump_to_here(jump_to_end);
+    return Constant(0);
+  }
+
+  std::optional<Value> maybe_emit_intrinsic
+  (std::string_view func_name, std::span<Ast::Node> args) {
+    if (func_name == "set") {
+      // Set a variable to a value, and return this value
+      if (args.size() != 2 || !args[0].is<Ast::Identifier>())
+        error("Syntax: (set var-name expression)");
+      return emit_set_variable(args[0].as<Ast::Identifier>().name, args[1]);
+    } else if (func_name == "if") {
+      // Depending on the condition, only evaluate one of the arguments
+      if (args.size() != 3)
+        error("Syntax: (if cond-expr then-expr else-expr)");
+      return emit_conditional(args[0], args[1], args[2]);
+    } else if (func_name == "while") {
+      // Evaluate loop-expr, always return 0
+      if (args.size() != 2)
+        error("Syntax: (while cond-expr loop-expr)");
+      return emit_while_loop(args[0], args[1]);
+    }
+    return std::nullopt;
+  }
+
+  // =========================================================================
+  // Emitting builtins.
+  // They unconditionally evaluate all arguments,
+  // and we know what code to generate for them.
+
+  std::optional<Value> maybe_emit_nary
+  (std::string_view func_name, std::span<const Value> inputs) {
+    std::optional<Operation> op;
+    if (func_name == "+")
+      op = Operation::add;
+    else if (func_name == "*")
+      op = Operation::mul;
+
+    if (!op)
+      return std::nullopt;
+
+    if (inputs.size() < 2)
+      error("'{}' needs at least 2 arguments, got {}", func_name, inputs.size());
+
+    Value latest = inputs[0];
+    for (size_t i = 1; i < inputs.size(); i++)
+      latest = emit(*op, new_var(), latest, inputs[i]);
+    return latest;
+  }
+
+  std::optional<Value> maybe_emit_binop
+  (std::string_view func_name, std::span<const Value> inputs) {
+    std::optional<Operation> op;
+    if (func_name == "-")
+      op = Operation::sub;
+    else if (func_name == "/")
+      op = Operation::div;
+    else if (func_name == "%")
+      op = Operation::mod;
+
+    if (!op)
+      return std::nullopt;
+
+    if (inputs.size() != 2)
+      error("'{}' needs 2 arguments, got {}", func_name, inputs.size());
+
+    return emit(*op, new_var(), inputs[0], inputs[1]);
+  }
+
+  // =========================================================================
+  // Compilation of high-level langauge constructs.
 
   Value compile_node(Ast::Node& node) {
     return node.match(
@@ -115,61 +213,6 @@ struct Compiler {
         return compile_parens(parens);
       }
     );
-  }
-
-  std::optional<Value> maybe_emit_intrinsic
-  (std::string_view func_name, std::span<Ast::Node> args) {
-    if (func_name == "set") {
-      // Set a variable to a value, and return this value
-      if (args.size() != 2 || !args[0].is<Ast::Identifier>())
-        error("Syntax: (set var-name expression)");
-      return emit_set_variable(args[0].as<Ast::Identifier>().name, args[1]);
-    } else if (func_name == "if") {
-      // Depending on the condition, only evaluate one of the arguments
-      if (args.size() != 3)
-        error("Syntax: (if cond-expr then-expr else-expr)");
-      return emit_conditional(args[0], args[1], args[2]);
-    }
-    return std::nullopt;
-  }
-
-  std::optional<Value> maybe_emit_nary
-  (std::string_view func_name, std::span<const Value> inputs) {
-    std::optional<Operation> op;
-    if (func_name == "+")
-      op = Operation::add;
-    else if (func_name == "*")
-      op = Operation::mul;
-
-    if (!op)
-      return std::nullopt;
-
-    if (inputs.size() < 2)
-      error("'{}' needs at least 2 arguments, got {}", func_name, inputs.size());
-
-    Value latest = inputs[0];
-    for (size_t i = 1; i < inputs.size(); i++)
-      latest = emit_arith(*op, create_variable(), latest, inputs[i]);
-    return latest;
-  }
-
-  std::optional<Value> maybe_emit_binop
-  (std::string_view func_name, std::span<const Value> inputs) {
-    std::optional<Operation> op;
-    if (func_name == "-")
-      op = Operation::sub;
-    else if (func_name == "/")
-      op = Operation::div;
-    else if (func_name == "%")
-      op = Operation::mod;
-
-    if (!op)
-      return std::nullopt;
-
-    if (inputs.size() != 2)
-      error("'{}' needs 2 arguments, got {}", func_name, inputs.size());
-
-    return emit_arith(*op, create_variable(), inputs[0], inputs[1]);
   }
 
   Value compile_parens(Ast::Parens& expr) {

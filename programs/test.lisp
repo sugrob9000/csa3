@@ -3,12 +3,11 @@
   (set x 1)
   (set z 3)
   (set w (+ 1 2 3)))
-(if 0
+(while x
   (progn
     (set y x)
     (set x x)
-    (set v (* z z )))
-  321)
+    (set v (* z z ))))
 (set x 3)
 (if x
   (set x 2)

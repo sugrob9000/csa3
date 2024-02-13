@@ -1,0 +1,83 @@
+#pragma once
+#include "util.hpp"
+#include <cstdint>
+#include <iosfwd>
+#include <string>
+#include <vector>
+
+// ===========================================================================
+// Stage 1: parsing
+//
+// Turning a text stream into `Ast`, a tree representation of the victim program
+// (it's more of an Abstract Syntax Forest, though)
+
+struct Ast {
+  struct Node;
+  struct Identifier { std::string name; };
+  struct Number { int32_t value; };
+  struct String { std::string value; };
+  struct Parens { std::vector<Node> children; };
+  struct Node: util::Variant<Identifier, Number, String, Parens> {};
+
+  std::vector<Parens> toplevel_exprs;
+
+  static Ast parse_stream(std::istream&);
+};
+
+// ===========================================================================
+// Stage 2: abstract compilation
+//
+// Turning the above tree representation into a stream of "abstract" instructions.
+// This instruction set has no concept of memory or limited registers, etc.
+// (Not SSA: we still have labels and plain jumps instead of basic blocks,
+//  and variables can be assigned to multiple times)
+//
+// The instructions closely match the final target instruction set,
+// but they operate in abstract values, for example:
+//
+//    [val5] <- [val1] + [val2]
+//
+//          instead of
+//
+//    [r1] <- mem(32)
+//    [r3] <- [r0] + [r1]
+//
+// As such, this instruction set has no loads or stores.
+// A later codegen pass will color the values onto registers
+// and generate appropriate spills.
+
+struct Constant { int32_t value; };
+struct Variable_id { int id; };
+using Value = util::Variant<Constant, Variable_id>;
+
+enum class Operation {
+  mov, // no src2
+  add, sub, mul, div, mod,
+  equ, gt, lt, // comparisons
+  jump, // no dest, src1 is condition, src2 is target (must be Constant)
+};
+
+struct Instruction {
+  Operation op;
+  Variable_id dest;
+  Value src1;
+  Value src2;
+};
+
+struct Compiler_output {
+  std::vector<Instruction> code;
+  std::vector<uint32_t> data;
+  int num_variables;
+};
+Compiler_output compile(Ast&);
+
+// ===========================================================================
+// Stage 3: code generation
+//
+// This pass knows about how many registers the target processor has, how to
+// lay out the code and data in memory, etc.
+// It will do color values onto registers, spill some into memory, and convert
+// abstract instructions into the real ISA.
+// Then it will also assemble the result into a binary image.
+
+void emit_image(std::ostream&, const Compiler_output&);

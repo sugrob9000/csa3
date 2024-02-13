@@ -1,11 +1,18 @@
-#include "codegen.hpp"
+#include "stages.hpp"
 #include <algorithm>
+#include <fmt/core.h>
 #include <iostream>
 #include <numeric>
 
 namespace {
 
-constexpr int num_regs = 4;
+// 2 registers are reserved for loads of spilled values and stores thereto.
+// An instruction might have had both its source operands spilled, so we need 2.
+constexpr int num_regs = 29;
+#if 0
+constexpr int spill_reg_id1 = 30;
+constexpr int spill_reg_id2 = 31;
+#endif
 
 struct Reg_assignment {
   constexpr static int spilled = -1;
@@ -14,6 +21,7 @@ struct Reg_assignment {
 
 struct Variable_assignment_info {
   // Auxillary info for assigning registers to variables
+
   constexpr static int life_low = std::numeric_limits<int>::min();
   constexpr static int life_high = std::numeric_limits<int>::max();
 
@@ -22,9 +30,7 @@ struct Variable_assignment_info {
   int variable_id;
   int assigned_reg = Reg_assignment::spilled;
 
-  bool is_spilled() const { return assigned_reg == Reg_assignment::spilled; }
   int life_length() const { return life_end - life_start; }
-
   bool lifetime_intersects(const Variable_assignment_info& other) const {
     return this->life_end >= other.life_start && this->life_start <= other.life_end;
   }
@@ -51,9 +57,9 @@ Reg_assignment assign_regs(const Compiler_output& cc) {
     };
     auto& insn = cc.code[insn_id];
     maybe_update_lifetime(insn.dest);
-    maybe_update_lifetime(insn.operand1);
+    maybe_update_lifetime(insn.src1);
     if (insn.op != Operation::jump && insn.op != Operation::mov)
-      maybe_update_lifetime(insn.operand2);
+      maybe_update_lifetime(insn.src2);
   }
 
   for (int i = 0; i < cc.num_variables; i++) {
@@ -61,15 +67,16 @@ Reg_assignment assign_regs(const Compiler_output& cc) {
     vinfos[i].variable_id = i;
   }
 
-  // Sort variables by ascending length of life, putting
-  // "hot" variables first to let them grab registers
+  // Sort variables by ascending length of life, putting "hot" ones first
   std::sort(vinfos.begin(), vinfos.end(),
     [] (const auto& a, const auto& b) {
       return a.life_length() < b.life_length();
     }
   );
 
-  // Greedily assign a register to each variable
+  // Greedily assign a register to each variable. "Hot" variables will go first,
+  // becoming more likely to grab registers (and because their life is shorter,
+  // being less likely to interfere with others).
   for (int vn1 = 0; vn1 < cc.num_variables; vn1++) {
     bool taken_regs[num_regs] = {};
     auto& us = vinfos[vn1];
@@ -111,7 +118,6 @@ void emit_image(std::ostream& os, const Compiler_output& cc) {
     if (reg_id == Reg_assignment::spilled)
       fmt::print("spilled\n");
     else
-      fmt::print(" -> reg #{}\n", reg_id);
-
+      fmt::print("-> reg #{}\n", reg_id);
   }
 }

@@ -1,6 +1,4 @@
-#include "codegen.hpp"
-#include "compile.hpp"
-#include "parse.hpp"
+#include "stages.hpp"
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <iostream>
@@ -23,7 +21,10 @@ int main() {
 
   for (int i = 0; auto& insn: compiler_output.code) {
     constexpr std::string_view insn_names[] = {
-      "mov", "add", "sub", "mul", "div", "mod", "jmp",
+      "mov",
+      "add", "sub", "mul", "div", "mod",
+      "equ", "gt", "lt",
+      "jump",
     };
 
     fmt::print("{:4x}: ", i++);
@@ -31,17 +32,17 @@ int main() {
     switch (insn.op) {
       using enum Operation;
     case jump:
-      fmt::print("jmp -> {} if {}\n", insn.operand2, insn.operand1);
+      fmt::print("jmp -> {} if {}\n", insn.src2, insn.src1);
       break;
     case mov:
-      fmt::print("mov #{} <- {}\n", insn.dest.id, insn.operand1);
+      fmt::print("mov #{} <- {}\n", insn.dest.id, insn.src1);
       break;
     default:
       fmt::print("{}: #{} <- {} {}\n",
           insn_names[static_cast<int>(insn.op)],
           insn.dest.id,
-          insn.operand1,
-          insn.operand2);
+          insn.src1,
+          insn.src2);
       break;
     }
   }
