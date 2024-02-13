@@ -31,7 +31,7 @@ bool is_identifier_char(char c) {
   return std::isprint(c) && !std::isspace(c);
 }
 
-class Lexer {
+struct Lexer {
   std::istream& is;
 
   std::optional<char> peek() {
@@ -121,9 +121,6 @@ class Lexer {
 
     return String_token(std::move(literal));
   }
-
-public:
-  explicit Lexer(std::istream& is_): is{is_} {}
 
   std::optional<Token> consume_token() {
     auto peeked = peek_after_whitespace();

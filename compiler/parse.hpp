@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+// More of an Abstract Syntax Forest, strictly speaking.
 struct Ast {
   struct Node; // fwd declare for std::vector in Parens
   struct Identifier { std::string name; };
@@ -14,5 +15,6 @@ struct Ast {
   struct Node: util::Variant<Identifier, Number, String, Parens> {};
 
   std::vector<Parens> toplevel_exprs;
+
   static Ast parse_stream(std::istream&);
 };

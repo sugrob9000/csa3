@@ -5,15 +5,15 @@
 #include <span>
 #include <unordered_map>
 
-namespace cc {
+namespace {
 
 struct Compiler {
   std::vector<uint32_t> static_data;
   std::vector<Instruction> emitted_code;
 
-  uint32_t next_variable_id = 0;
+  int next_variable_id = 0;
   Variable_id create_variable() {
-    return Variable_id(++next_variable_id);
+    return Variable_id(next_variable_id++);
   }
 
   // All incoming string data outlives the compiler, so we can store just views
@@ -35,9 +35,9 @@ struct Compiler {
     size_t result = emitted_code.size();
     emitted_code.push_back({
       .op = Operation::jump,
-        .dest = {},
-        .operand1 = condition,
-        .operand2 = Constant(unpatched_jump_magic),
+      .dest = {},
+      .operand1 = condition,
+      .operand2 = Constant(unpatched_jump_magic),
     });
     return result;
   }
@@ -173,11 +173,11 @@ struct Compiler {
   }
 
   Value compile_parens(Ast::Parens& expr) {
-    auto& terms = expr.children;
+    std::span terms = expr.children;
     assert(!terms.empty()); // Should have been a parse error
 
     auto& func = terms[0];
-    auto arguments = std::span{ terms.begin() + 1, terms.end() };
+    auto arguments = terms.subspan(1);
 
     if (!func.is<Ast::Identifier>())
       error("Function name must be an identifier");
@@ -200,6 +200,7 @@ struct Compiler {
     if (auto nary = maybe_emit_nary(func_name, inputs))
       return *nary;
 
+    // Kind of an intrinsic, but it also just evaluates all arguments anyway
     if (func_name == "progn") {
       if (inputs.empty())
         error("'{}' needs at least one argument", func_name);
@@ -210,6 +211,7 @@ struct Compiler {
   }
 };
 
+} // anon namespace
 
 Compiler_output compile(Ast& ast) {
   Compiler compiler;
@@ -218,7 +220,6 @@ Compiler_output compile(Ast& ast) {
   return Compiler_output {
     .code = std::move(compiler.emitted_code),
     .data = std::move(compiler.static_data),
+    .num_variables = compiler.next_variable_id,
   };
 }
-
-} // namespace cc

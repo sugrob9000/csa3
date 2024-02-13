@@ -1,32 +1,35 @@
+#include "codegen.hpp"
 #include "compile.hpp"
 #include "parse.hpp"
 #include <fmt/core.h>
+#include <fmt/format.h>
 #include <iostream>
 
 template<>
-struct fmt::formatter<cc::Value> {
+struct fmt::formatter<Value> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-  appender format(cc::Value& value, format_context& ctx) {
+  appender format(Value& value, format_context& ctx) {
     return value.match(
-      [&] (cc::Constant c) { return format_to(ctx.out(), "{:x}", c.value); },
-      [&] (cc::Variable_id v) { return format_to(ctx.out(), "#{}", v.id); }
+      [&] (Constant c) { return format_to(ctx.out(), "{:x}", c.value); },
+      [&] (Variable_id v) { return format_to(ctx.out(), "#{}", v.id); }
     );
   }
 };
 
 int main() {
   auto ast = Ast::parse_stream(std::cin);
-  auto compiler_output = cc::compile(ast);
+  auto compiler_output = compile(ast);
+  fmt::print("data: [{:x}]\n", fmt::join(compiler_output.data, ", "));
 
   for (int i = 0; auto& insn: compiler_output.code) {
     constexpr std::string_view insn_names[] = {
       "mov", "add", "sub", "mul", "div", "mod", "jmp",
     };
 
-    fmt::print("{:4}: ", i);
+    fmt::print("{:4x}: ", i++);
 
     switch (insn.op) {
-      using enum cc::Operation;
+      using enum Operation;
     case jump:
       fmt::print("jmp -> {} if {}\n", insn.operand2, insn.operand1);
       break;
@@ -41,6 +44,7 @@ int main() {
           insn.operand2);
       break;
     }
-    i++;
   }
+
+  emit_image(std::cout, compiler_output);
 }

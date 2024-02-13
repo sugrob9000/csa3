@@ -1,4 +1,4 @@
-// Compiler-wide utilities
+// Compiler diagnostics.
 
 #pragma once
 #include <fmt/core.h>

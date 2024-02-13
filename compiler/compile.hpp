@@ -1,8 +1,3 @@
-#pragma once
-#include "diag.hpp"
-#include "parse.hpp"
-#include <vector>
-
 // The "abstract" compiler targets an instruction set that has no concept of
 // memory or limited registers, etc. Not quite SSA: we still have labels and
 // plain jumps instead of basic blocks. Yes, this severely hinders lifetime analysis.
@@ -21,10 +16,13 @@
 // A later codegen pass will color the values onto registers
 // and generate appropriate spills.
 
-namespace cc {
+#pragma once
+#include "diag.hpp"
+#include "parse.hpp"
+#include <vector>
 
 struct Constant { int32_t value; };
-struct Variable_id { uint32_t id; };
+struct Variable_id { int id; };
 using Value = util::Variant<Constant, Variable_id>;
 
 enum class Operation {
@@ -43,7 +41,6 @@ struct Instruction {
 struct Compiler_output {
   std::vector<Instruction> code;
   std::vector<uint32_t> data;
+  int num_variables;
 };
 Compiler_output compile(Ast&);
-
-} // namespace cc

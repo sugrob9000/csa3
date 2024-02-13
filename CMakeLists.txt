@@ -34,7 +34,8 @@ function(create_executable name src-dir)
       -Wpedantic
       -Wshadow
       -Wattributes
-      -Wstrict-aliasing)
+      -Wstrict-aliasing
+      -Wno-sign-compare)
     if(CMAKE_BUILD_TYPE STREQUAL Debug)
       target_compile_options(${name} PRIVATE -ggdb)
     endif()
