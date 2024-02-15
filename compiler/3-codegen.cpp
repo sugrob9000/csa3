@@ -3,121 +3,163 @@
 #include <fmt/core.h>
 #include <iostream>
 #include <numeric>
+#include <span>
 
 namespace {
 
+// ===========================================================================
+
+bool has_dest(IR_op op) {
+  return op != IR_op::halt
+      && op != IR_op::jump;
+}
+
+bool has_src1(IR_op op) {
+  return op != IR_op::halt;
+}
+
+bool has_src2(IR_op op) {
+  return op != IR_op::halt
+      && op != IR_op::mov;
+}
+
+// ===========================================================================
+// Register coloring.
+
 // 2 registers are reserved for loads of spilled values and stores thereto.
 // An instruction might have had both its source operands spilled, so we need 2.
-constexpr int num_regs = 29;
-#if 0
-constexpr int spill_reg_id1 = 30;
-constexpr int spill_reg_id2 = 31;
-#endif
+constexpr int num_registers = 29;
 
-struct Reg_assignment {
-  constexpr static int spilled = -1;
-  std::vector<int> reg_ids;
+
+// A variable is considered alive between its first and last usage, inclusive
+struct Lifetime {
+  int start = std::numeric_limits<int>::max();
+  int end = std::numeric_limits<int>::min();
 };
 
-struct Variable_assignment_info {
-  // Auxillary info for assigning registers to variables
+auto build_var_lifetimes(int num_variables, std::span<IR_insn> code) {
+	std::vector<Lifetime> result(num_variables);
 
-  constexpr static int life_low = std::numeric_limits<int>::min();
-  constexpr static int life_high = std::numeric_limits<int>::max();
-
-  int life_start = life_high;
-  int life_end = life_low;
-  int variable_id;
-  int assigned_reg = Reg_assignment::spilled;
-
-  int life_length() const { return life_end - life_start; }
-  bool lifetime_intersects(const Variable_assignment_info& other) const {
-    return this->life_end >= other.life_start && this->life_start <= other.life_end;
-  }
-
-  void update_lifetime(int detected_use) {
-    life_start = std::min(life_start, detected_use);
-    life_end = std::max(life_end, detected_use);
-  }
-
-  void assert_valid_lifetime() const {
-    assert(life_start != life_high);
-    assert(life_end != life_low);
-  }
-};
-
-Reg_assignment assign_regs(const Compiler_output& cc) {
-  std::vector<Variable_assignment_info> vinfos(cc.num_variables);
-
-  // Calculate the lifetime of each variable (from first to last use)
-  for (int insn_id = 0; insn_id < cc.code.size(); insn_id++) {
+  for (int insn_id = 0; insn_id < code.size(); insn_id++) {
     const auto maybe_update_lifetime = [&] (Value v) {
-      if (v.is<Variable_id>())
-        vinfos[v.as<Variable_id>().id].update_lifetime(insn_id);
+      if (v.is<Variable_id>()) {
+				auto& life = result[v.as<Variable_id>().id];
+				life.start = std::min(life.start, insn_id);
+				life.end = std::max(life.end, insn_id);
+      }
     };
-    auto& insn = cc.code[insn_id];
-    maybe_update_lifetime(insn.dest);
-    maybe_update_lifetime(insn.src1);
-    if (insn.op != Operation::jump && insn.op != Operation::mov)
-      maybe_update_lifetime(insn.src2);
+    auto& insn = code[insn_id];
+    if (has_dest(insn.op)) maybe_update_lifetime(insn.dest);
+    if (has_src1(insn.op)) maybe_update_lifetime(insn.src1);
+    if (has_src2(insn.op)) maybe_update_lifetime(insn.src2);
   }
 
-  for (int i = 0; i < cc.num_variables; i++) {
-    vinfos[i].assert_valid_lifetime();
-    vinfos[i].variable_id = i;
-  }
+	return result;
+}
 
+// The places a variable can be assigned to live in
+struct Memory_addr { uint16_t addr; }; // Will need patching after for relocation
+struct Register_id { uint8_t id; };
+using Variable_location = One_of<Memory_addr, Register_id>;
+
+std::vector<Variable_location> color_variables(std::span<Lifetime> lives) {
   // Sort variables by ascending length of life, putting "hot" ones first
-  std::sort(vinfos.begin(), vinfos.end(),
-    [] (const auto& a, const auto& b) {
-      return a.life_length() < b.life_length();
-    }
-  );
+  std::vector<int> vars_by_life_length(lives.size());
+  for (int i = 0; i < lives.size(); i++)
+    vars_by_life_length[i] = i;
+  std::sort(vars_by_life_length.begin(), vars_by_life_length.end(),
+    [&] (int a, int b) {
+      return (lives[a].end - lives[a].start)
+           < (lives[b].end - lives[b].start);
+    });
 
   // Greedily assign a register to each variable. "Hot" variables will go first,
   // becoming more likely to grab registers (and because their life is shorter,
   // being less likely to interfere with others).
-  for (int vn1 = 0; vn1 < cc.num_variables; vn1++) {
-    bool taken_regs[num_regs] = {};
-    auto& us = vinfos[vn1];
+  std::vector<Variable_location> result(lives.size());
+  int16_t next_memory_addr = 0;
 
-    for (int vn2 = 0; vn2 < vn1; vn2++) {
-      const auto& them = vinfos[vn2];
-      const int their_reg = them.assigned_reg;
-      if (their_reg != Reg_assignment::spilled
-      && us.lifetime_intersects(them))
-        taken_regs[their_reg] = true;
+  for (int i = 0; i < lives.size(); i++) {
+    int our_id = vars_by_life_length[i];
+    auto& our_life = lives[our_id];
+    bool taken[num_registers] = {};
+
+    for (int j = 0; j < i; j++) {
+      int their_id = vars_by_life_length[j];
+      auto& their_life = lives[their_id];
+      if (auto their_reg = result[their_id].maybe_as<Register_id>();
+          their_reg
+          && our_life.end >= their_life.start
+          && our_life.start <= their_life.end)
+        taken[their_reg->id] = true;
     }
 
-    for (int reg_id = 0; reg_id < num_regs; reg_id++) {
-      if (!taken_regs[reg_id]) {
-        us.assigned_reg = reg_id;
+    bool found_register = false;
+    for (int reg_id = 0; reg_id < num_registers; reg_id++) {
+      if (!taken[reg_id]) {
+        result[our_id] = Register_id(reg_id);
+        found_register = true;
         break;
       }
     }
+    if (!found_register)
+      result[our_id] = Memory_addr(next_memory_addr++);
   }
 
-  // Gather result
-  Reg_assignment result;
-  result.reg_ids.resize(cc.num_variables);
-  for (auto& vi: vinfos)
-    result.reg_ids[vi.variable_id] = vi.assigned_reg;
   return result;
 }
 
+
+// ===========================================================================
+// Memory-aware codegen.
+
+// Much of the same operations as the abstract `IR_op`, but
+// without mov (`add X, 0` suffices) and with loads and stores
+
+enum class Hw_opcodes: uint8_t {
+  halt = 0x0,
+  load = 0x1,
+  store = 0x2,
+  add = 0x3,
+  sub = 0x4,
+  mul = 0x5,
+  div = 0x6,
+  mod = 0x7,
+  cmp_equ = 0x8,
+  cmp_gt = 0x9,
+  cmp_lt = 0xa,
+  cond_jump = 0xb,
+};
+
+struct Codegen_state {
+  std::vector<uint32_t> static_data;
+  std::vector<uint32_t> hw_code;
+
+  void emit_halt() {
+    hw_code.push_back(0);
+  }
+};
+
 } // anon namespace
 
-void emit_image(std::ostream& os, const Compiler_output& cc) {
-  (void) os;
-  auto assignment = assign_regs(cc);
 
-  fmt::print("{} variables colored onto {} registers:\n", cc.num_variables, num_regs);
+void emit_image(std::ostream& os, IR_output&& cc) {
+  (void) os;
+
+  Codegen_state codegen;
+
+  auto code = std::move(cc.code);
+  codegen.static_data = std::move(cc.data);
+
+  auto lifetimes = build_var_lifetimes(cc.num_variables, code);
+  auto coloring = color_variables(lifetimes);
+
+  fmt::print("{} variables colored onto {} registers:\n", cc.num_variables, num_registers);
   for (int var_id = 0; var_id < cc.num_variables; var_id++) {
-    int reg_id = assignment.reg_ids[var_id];
-    fmt::print("  #{} ", var_id);
-    if (reg_id == Reg_assignment::spilled)
-      fmt::print("spilled\n");
-    else
-      fmt::print("-> reg #{}\n", reg_id);
+    fmt::print("  #{} -> ", var_id);
+    coloring[var_id].match(
+      [] (Register_id reg) { fmt::print("reg #{}\n", reg.id); },
+      [] (Memory_addr mem) { fmt::print("MEM #{}\n", mem.addr); }
+    );
   }
 }

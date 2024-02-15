@@ -1,36 +1,34 @@
 #pragma once
 #include <cassert>
+#include <optional>
 #include <variant>
 
-namespace util {
-
+// A (very) poor man's sum type with matching:
 // `std::variant`, augmented with a few convenience methods.
+
 template<typename... Args>
-class Variant: std::variant<Args...> {
-  using Base = std::variant<Args...>;
+struct One_of: std::variant<Args...> {
+  using std::variant<Args...>::variant;
 
-public:
-  using Base::Base;
-
-  template<typename T> bool is() const {
+  template<typename T>
+  bool is() const {
     return std::holds_alternative<T>(*this);
   }
 
-  template<typename T> T& as() {
+  template<typename T>
+  T& as() {
     assert(is<T>());
     return std::get<T>(*this);
   }
 
-  template<typename... Visitors>
-  decltype(auto) match(Visitors&&... visitors) {
-    struct Overloaded_visitor: Visitors... {
-      using Visitors::operator()...;
-    };
-    return std::visit(
-      Overloaded_visitor{ std::forward<Visitors>(visitors)... },
-      static_cast<Base&>(*this)
-    );
+  template<typename T>
+  T* maybe_as() {
+    return is<T>() ? &as<T>() : nullptr;
+  }
+
+  template<typename... Fs>
+  decltype(auto) match(Fs&&... fs) {
+    struct Visitor: Fs... { using Fs::operator()...; };
+    return std::visit(Visitor{ std::forward<Fs>(fs)... }, *this);
   }
 };
-
-} // namespace util

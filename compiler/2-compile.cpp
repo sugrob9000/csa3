@@ -10,7 +10,7 @@ namespace {
 struct Compiler {
   // The eventual output of this stage
   std::vector<uint32_t> static_data;
-  std::vector<Instruction> emitted_code;
+  std::vector<IR_insn> emitted_code;
 
   // This stage liberally creates new abstract "variables"
   int next_variable_id = 0;
@@ -27,7 +27,7 @@ struct Compiler {
   // Straightforward wrappers around emitted_code.push_back(),
   // but it's very convenient to return the destination variable
 
-  Variable_id emit(Operation op, Variable_id dest, Value src1, Value src2) {
+  Variable_id emit(IR_op op, Variable_id dest, Value src1, Value src2) {
     emitted_code.push_back({
       .op = op,
       .dest = dest,
@@ -38,7 +38,7 @@ struct Compiler {
   }
 
   Variable_id emit_mov(Variable_id dest, Value src) {
-    return emit(Operation::mov, dest, src, {});
+    return emit(IR_op::mov, dest, src, {});
   }
 
   // =========================================================================
@@ -51,33 +51,33 @@ struct Compiler {
   //
   // With backward jumps, we first emit the label, then later the jump:
   //
-  //   auto my_label = label_to_here();
+  //   auto my_label = label_here();
   //   emit_some_more_code();
   //   emit_jump_to(my_label);
 
   using Label = int32_t;
   constexpr static Label unpatched_jump_magic = 0x7FFFDEAD;
 
-  Label label_to_here() {
+  Label label_here() {
     return Label(emitted_code.size());
   }
 
   void emit_jump_to(Label label, Value condition = Constant(true)) {
-    emit(Operation::jump, {}, condition, Constant(label));
+    emit(IR_op::jump, {}, condition, Constant(label));
   }
 
   using Jump_id = size_t;
 
   Jump_id emit_unpatched_jump(Value condition = Constant(true)) {
     size_t result = emitted_code.size();
-    emit(Operation::jump, {}, condition, Constant(unpatched_jump_magic));
+    emit(IR_op::jump, {}, condition, Constant(unpatched_jump_magic));
     return result;
   }
 
   void patch_jump_to_here(Jump_id id) {
     int32_t& value = emitted_code[id].src2.as<Constant>().value;
     assert(value == unpatched_jump_magic);
-    value = label_to_here();
+    value = label_here();
   }
 
   // =========================================================================
@@ -85,7 +85,7 @@ struct Compiler {
   // They must take AST nodes and not values, because they contain logic
   // as to what gets evaluated or not.
 
-  Variable_id emit_set_variable(std::string_view name, Ast::Node& value) {
+  Variable_id emit_set(std::string_view name, Ast::Node& value) {
     auto [it, is_new] = variables.try_emplace(name);
     Variable_id& dest = it->second;
     if (is_new)
@@ -93,7 +93,7 @@ struct Compiler {
     return emit_mov(dest, compile_node(value));
   }
 
-  Value emit_conditional(Ast::Node& cond_expr, Ast::Node& then_expr, Ast::Node& else_expr) {
+  Variable_id emit_if(Ast::Node& cond_expr, Ast::Node& then_expr, Ast::Node& else_expr) {
     Variable_id result = new_var();
 
     auto jump_to_else = emit_unpatched_jump(compile_node(cond_expr));
@@ -107,16 +107,12 @@ struct Compiler {
     return result;
   }
 
-  Value emit_while_loop(Ast::Node& cond_expr, Ast::Node& loop_expr) {
-    auto top = label_to_here();
-    auto inv_cond = emit(
-      Operation::equ,
-      new_var(),
-      compile_node(cond_expr),
-      Constant(0)
-    );
-    auto jump_to_end = emit_unpatched_jump(inv_cond);
-    (void) compile_node(loop_expr); // ignore the loop expression value
+  Constant emit_while(Ast::Node& cond_expr, Ast::Node& loop_expr) {
+    auto top = label_here();
+    auto cond = compile_node(cond_expr);
+    auto inverse_cond = emit(IR_op::cmp_equ, new_var(), cond, Constant(0));
+    auto jump_to_end = emit_unpatched_jump(inverse_cond);
+    (void) compile_node(loop_expr);
     emit_jump_to(top);
     patch_jump_to_here(jump_to_end);
     return Constant(0);
@@ -128,17 +124,17 @@ struct Compiler {
       // Set a variable to a value, and return this value
       if (args.size() != 2 || !args[0].is<Ast::Identifier>())
         error("Syntax: (set var-name expression)");
-      return emit_set_variable(args[0].as<Ast::Identifier>().name, args[1]);
+      return emit_set(args[0].as<Ast::Identifier>().name, args[1]);
     } else if (func_name == "if") {
       // Depending on the condition, only evaluate one of the arguments
       if (args.size() != 3)
         error("Syntax: (if cond-expr then-expr else-expr)");
-      return emit_conditional(args[0], args[1], args[2]);
+      return emit_if(args[0], args[1], args[2]);
     } else if (func_name == "while") {
       // Evaluate loop-expr, always return 0
       if (args.size() != 2)
         error("Syntax: (while cond-expr loop-expr)");
-      return emit_while_loop(args[0], args[1]);
+      return emit_while(args[0], args[1]);
     }
     return std::nullopt;
   }
@@ -150,11 +146,11 @@ struct Compiler {
 
   std::optional<Value> maybe_emit_nary
   (std::string_view func_name, std::span<const Value> inputs) {
-    std::optional<Operation> op;
+    std::optional<IR_op> op;
     if (func_name == "+")
-      op = Operation::add;
+      op = IR_op::add;
     else if (func_name == "*")
-      op = Operation::mul;
+      op = IR_op::mul;
 
     if (!op)
       return std::nullopt;
@@ -170,13 +166,20 @@ struct Compiler {
 
   std::optional<Value> maybe_emit_binop
   (std::string_view func_name, std::span<const Value> inputs) {
-    std::optional<Operation> op;
+    std::optional<IR_op> op;
+
     if (func_name == "-")
-      op = Operation::sub;
+      op = IR_op::sub;
     else if (func_name == "/")
-      op = Operation::div;
+      op = IR_op::div;
     else if (func_name == "%")
-      op = Operation::mod;
+      op = IR_op::mod;
+    else if (func_name == "=")
+      op = IR_op::cmp_equ;
+    else if (func_name == ">")
+      op = IR_op::cmp_gt;
+    else if (func_name == "<")
+      op = IR_op::cmp_lt;
 
     if (!op)
       return std::nullopt;
@@ -256,11 +259,15 @@ struct Compiler {
 
 } // anon namespace
 
-Compiler_output compile(Ast& ast) {
+IR_output compile(Ast& ast) {
   Compiler compiler;
+
   for (auto& expr: ast.toplevel_exprs)
     compiler.compile_parens(expr);
-  return Compiler_output {
+
+  compiler.emit(IR_op::halt, {}, {}, {});
+
+  return {
     .code = std::move(compiler.emitted_code),
     .data = std::move(compiler.static_data),
     .num_variables = compiler.next_variable_id,

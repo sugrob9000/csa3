@@ -15,7 +15,7 @@ struct Identifier_token { std::string name; };
 struct Number_token { int32_t value; };
 struct String_token { std::string value; };
 
-using Token = util::Variant<
+using Token = One_of<
   Open_token,
   Close_token,
   Identifier_token,

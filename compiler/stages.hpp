@@ -17,7 +17,7 @@ struct Ast {
   struct Number { int32_t value; };
   struct String { std::string value; };
   struct Parens { std::vector<Node> children; };
-  struct Node: util::Variant<Identifier, Number, String, Parens> {};
+  struct Node: One_of<Identifier, Number, String, Parens> {};
 
   std::vector<Parens> toplevel_exprs;
 
@@ -48,36 +48,37 @@ struct Ast {
 
 struct Constant { int32_t value; };
 struct Variable_id { int id; };
-using Value = util::Variant<Constant, Variable_id>;
+using Value = One_of<Constant, Variable_id>;
 
-enum class Operation {
+enum class IR_op {
+  halt, // no dest or srcs
   mov, // no src2
   add, sub, mul, div, mod,
-  equ, gt, lt, // comparisons
+  cmp_equ, cmp_gt, cmp_lt,
   jump, // no dest, src1 is condition, src2 is target (must be Constant)
 };
 
-struct Instruction {
-  Operation op;
+struct IR_insn {
+  IR_op op;
   Variable_id dest;
   Value src1;
   Value src2;
 };
 
-struct Compiler_output {
-  std::vector<Instruction> code;
+struct IR_output {
+  std::vector<IR_insn> code;
   std::vector<uint32_t> data;
   int num_variables;
 };
-Compiler_output compile(Ast&);
+IR_output compile(Ast&);
 
 // ===========================================================================
 // Stage 3: code generation
 //
 // This pass knows about how many registers the target processor has, how to
 // lay out the code and data in memory, etc.
-// It will do color values onto registers, spill some into memory, and convert
+// It will color values onto registers, spill some into memory, and convert
 // abstract instructions into the real ISA.
 // Then it will also assemble the result into a binary image.
 
-void emit_image(std::ostream&, const Compiler_output&);
+void emit_image(std::ostream&, IR_output&&);

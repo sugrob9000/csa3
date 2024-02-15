@@ -1,5 +1,2 @@
-(let name (allocstr))
-(writestr "Your name: ")
-
-(writestr "Hello, ")
-(writestr name)
+(set counter 0)
+(while 1)

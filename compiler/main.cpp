@@ -8,7 +8,7 @@ struct fmt::formatter<Value> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
   appender format(Value& value, format_context& ctx) {
     return value.match(
-      [&] (Constant c) { return format_to(ctx.out(), "{:x}", c.value); },
+      [&] (Constant c) { return format_to(ctx.out(), "0x{:x}", c.value); },
       [&] (Variable_id v) { return format_to(ctx.out(), "#{}", v.id); }
     );
   }
@@ -21,24 +21,28 @@ int main() {
 
   for (int i = 0; auto& insn: compiler_output.code) {
     constexpr std::string_view insn_names[] = {
+      "halt",
       "mov",
       "add", "sub", "mul", "div", "mod",
       "equ", "gt", "lt",
       "jump",
     };
 
-    fmt::print("{:4x}: ", i++);
+    fmt::print("{:3x}: ", i++);
 
     switch (insn.op) {
-      using enum Operation;
+      using enum IR_op;
     case jump:
       fmt::print("jmp -> {} if {}\n", insn.src2, insn.src1);
       break;
     case mov:
       fmt::print("mov #{} <- {}\n", insn.dest.id, insn.src1);
       break;
+    case halt:
+      fmt::print("halt\n");
+      break;
     default:
-      fmt::print("{}: #{} <- {} {}\n",
+      fmt::print("{}: #{} <- {}, {}\n",
           insn_names[static_cast<int>(insn.op)],
           insn.dest.id,
           insn.src1,
@@ -47,5 +51,5 @@ int main() {
     }
   }
 
-  emit_image(std::cout, compiler_output);
+  emit_image(std::cout, std::move(compiler_output));
 }
