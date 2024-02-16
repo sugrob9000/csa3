@@ -96,12 +96,12 @@ struct Compiler {
   Variable_id emit_if(Ast::Node& cond_expr, Ast::Node& then_expr, Ast::Node& else_expr) {
     Variable_id result = new_var();
 
-    auto jump_to_else = emit_unpatched_jump(compile_node(cond_expr));
-    emit_mov(result, compile_node(then_expr));
+    auto jump_to_then = emit_unpatched_jump(compile_node(cond_expr));
+    emit_mov(result, compile_node(else_expr));
     auto jump_to_end = emit_unpatched_jump();
 
-    patch_jump_to_here(jump_to_else);
-    emit_mov(result, compile_node(else_expr));
+    patch_jump_to_here(jump_to_then);
+    emit_mov(result, compile_node(then_expr));
 
     patch_jump_to_here(jump_to_end);
     return result;

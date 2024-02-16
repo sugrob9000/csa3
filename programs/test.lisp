@@ -1,5 +1,20 @@
+(set lives-long-1 129312938)
+(set lives-long-2 129312938)
+(set lives-long-3 129312938)
+(set lives-long-4 129312938)
+(set lives-long-5 129312938)
+(set lives-long-6 129312938)
+
 (set x 0)
 (while (< x 20)
        (progn
          (set x (+ x 1))))
 (while 1 1)
+(set x 10241024)
+
+(set x (+ lives-long-1 129312938))
+(set y (+ lives-long-2 129312938))
+(set z (+ lives-long-3 129312938))
+(set a (+ lives-long-4 129312938))
+(set b (+ lives-long-5 129312938))
+(set c (+ lives-long-6 129312938))

@@ -51,8 +51,8 @@ struct Variable_id { int id; };
 using Value = One_of<Constant, Variable_id>;
 
 enum class IR_op {
-  halt, // no dest or srcs
-  mov, // no src2
+  halt, // no dest, no src1, no src2
+  mov,  // no src2
   add, sub, mul, div, mod,
   cmp_equ, cmp_gt, cmp_lt,
   jump, // no dest, src1 is condition, src2 is target (must be Constant)

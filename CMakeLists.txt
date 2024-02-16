@@ -37,7 +37,7 @@ function(create_executable name src-dir)
       -Wstrict-aliasing
       -Wno-sign-compare)
     if(CMAKE_BUILD_TYPE STREQUAL Debug)
-      target_compile_options(${name} PRIVATE -ggdb)
+      target_compile_options(${name} PRIVATE -g3)
     endif()
   else()
     message(WARNING "C++ compiler is not gcc, will miss some options")

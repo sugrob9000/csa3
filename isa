@@ -1,0 +1,22 @@
+32 bits / insn
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+[ 4   ]
+opcode
+
+= = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+LOAD    [   6     ] [][                21                     ]
+STORE    reg id     mode        reg id | imm absolute addr
+
+= = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ADD     [   6     ] [][       10        ] [][       10        ]
+SUB      dest id    m    reg id | imm            reg id | imm
+MUL
+DIV
+MOD
+EQU
+LT
+GT
+
+= = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+JUMP    [   6     ] [                 22                      ]
+        cond reg                  abs dest addr
