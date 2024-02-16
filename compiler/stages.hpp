@@ -2,6 +2,7 @@
 #include "util.hpp"
 #include <cstdint>
 #include <iosfwd>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -25,7 +26,7 @@ struct Ast {
 };
 
 // ===========================================================================
-// Stage 2: abstract compilation
+// Stage 2: abstract compilation into an IR
 //
 // Turning the above tree representation into a stream of "abstract" instructions.
 // This instruction set has no concept of memory or limited registers, etc.
@@ -82,3 +83,5 @@ IR_output compile(Ast&);
 // Then it will also assemble the result into a binary image.
 
 void emit_image(std::ostream&, IR_output&&);
+
+void disasm_hw(std::span<const uint32_t> data, std::span<const uint32_t> code);

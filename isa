@@ -18,5 +18,8 @@ LT
 GT
 
 = = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-JUMP    [   6     ] [                 22                      ]
+JMP     [                        28                           ]
+                            abs dest addr
+
+JMP-IF  [   6     ] [                 22                      ]
         cond reg                  abs dest addr

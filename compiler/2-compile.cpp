@@ -262,6 +262,10 @@ struct Compiler {
 IR_output compile(Ast& ast) {
   Compiler compiler;
 
+  // Reserve 1 word at address 0x0 for an instruction that
+  // jumps over data, because 0x0 is the entry point
+  compiler.static_data.emplace_back();
+
   for (auto& expr: ast.toplevel_exprs)
     compiler.compile_parens(expr);
 
