@@ -4,22 +4,18 @@
 opcode
 
 = = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-LOAD    [   6     ] [][                21                     ]
-STORE    reg id     mode        reg id | imm absolute addr
+mem     [   6     ] [][                21                     ]
+         reg id     mode      0 reg | 1 imm    (absolute addr)
+LOAD, STORE
 
 = = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-ADD     [   6     ] [][       10        ] [][       10        ]
-SUB      dest id    m    reg id | imm            reg id | imm
-MUL
-DIV
-MOD
-EQU
-LT
-GT
+binop   [   6     ] [][       10        ] [][       10        ]
+         dest id    m   0 reg | 1 imm     m    0 reg | 1 imm
+ADD, SUB, MUL, DIV, MOD, EQU, LT, GT
 
 = = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 JMP     [                        28                           ]
-                            abs dest addr
+                             imm absolute dest addr
 
 JMP-IF  [   6     ] [                 22                      ]
-        cond reg                  abs dest addr
+        cond reg             imm absolute dest addr

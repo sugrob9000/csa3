@@ -25,6 +25,7 @@ struct Ast {
   static Ast parse_stream(std::istream&);
 };
 
+
 // ===========================================================================
 // Stage 2: abstract compilation into an IR
 //
@@ -47,33 +48,35 @@ struct Ast {
 // A later codegen pass will color the values onto registers and generate
 // appropriate spills, too.
 
-struct Constant { int32_t value; };
-struct Variable_id { int id; };
-using Value = One_of<Constant, Variable_id>;
+struct Ir {
+  struct Constant { int32_t value; };
+  struct Variable { int id; };
+  using Value = One_of<Constant, Variable>;
 
-enum class IR_op {
-  halt,  // no dest, no src1, no src2
-  mov,   // no src2
-  load,  // no src2
-  store, // no dest, src1 is addr, src2 is value
-  add, sub, mul, div, mod,
-  cmp_equ, cmp_gt, cmp_lt,
-  jump, // no dest, src1 is condition, src2 is target (must be Constant)
-};
+  enum class Op {
+    halt,  // no dest, no src1, no src2
+    mov,   // no src2
+    load,  // no src2
+    store, // no dest, src1 is pointer, src2 is value
+    add, sub, mul, div, mod,
+    cmp_equ, cmp_gt, cmp_lt,
+    jump, // no dest, src1 is condition, src2 is target (must be Constant)
+  };
 
-struct IR_insn {
-  IR_op op;
-  Variable_id dest;
-  Value src1;
-  Value src2;
-};
+  struct Insn {
+    Op op;
+    Variable dest;
+    Value src1;
+    Value src2;
+  };
 
-struct IR_output {
-  std::vector<IR_insn> code;
+  std::vector<Insn> code;
   std::vector<uint32_t> data;
   int num_variables;
+
+  static Ir compile(Ast&);
 };
-IR_output compile(Ast&);
+
 
 // ===========================================================================
 // Stage 3: code generation
@@ -84,6 +87,11 @@ IR_output compile(Ast&);
 // abstract instructions into the real ISA.
 // Then it will also assemble the result into a binary image.
 
-void emit_image(std::ostream&, IR_output&&);
+struct Hw_image {
+  std::vector<uint32_t> words;
+  uint32_t data_break;
 
-void disasm_hw(std::span<const uint32_t> data, std::span<const uint32_t> code);
+  static Hw_image from_ir(Ir&&);
+
+  void disasm() const;
+};

@@ -33,4 +33,13 @@ struct One_of: std::variant<Args...> {
   }
 };
 
-[[noreturn]] inline void unreachable() { __builtin_unreachable(); }
+
+// Polyfill C++23 std::unreachable()
+
+[[noreturn]] inline void unreachable() {
+#if NDEBUG
+  __builtin_unreachable();
+#else
+  assert(false);
+#endif
+}

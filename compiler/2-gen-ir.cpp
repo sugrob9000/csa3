@@ -10,16 +10,16 @@ namespace {
 struct Compiler {
   // The eventual output of this stage
   std::vector<uint32_t> static_data;
-  std::vector<IR_insn> emitted_code;
+  std::vector<Ir::Insn> emitted_code;
 
   // This stage liberally creates new abstract "variables"
   int next_variable_id = 0;
-  Variable_id new_var() {
-    return Variable_id(next_variable_id++);
+  Ir::Variable new_var() {
+    return Ir::Variable(next_variable_id++);
   }
 
   // All incoming string data outlives the compiler, so we can store just views
-  std::unordered_map<std::string_view, Variable_id> variables;
+  std::unordered_map<std::string_view, Ir::Variable> variables;
 
 
   // =========================================================================
@@ -27,7 +27,7 @@ struct Compiler {
   // Straightforward wrappers around emitted_code.push_back(),
   // but it's very convenient to return the destination variable
 
-  Variable_id emit(IR_op op, Variable_id dest, Value src1, Value src2) {
+  Ir::Variable emit(Ir::Op op, Ir::Variable dest, Ir::Value src1, Ir::Value src2) {
     emitted_code.push_back({
       .op = op,
       .dest = dest,
@@ -37,16 +37,16 @@ struct Compiler {
     return dest;
   }
 
-  Variable_id emit_mov(Variable_id dest, Value src) {
-    return emit(IR_op::mov, dest, src, {});
+  Ir::Variable emit_mov(Ir::Variable dest, Ir::Value src) {
+    return emit(Ir::Op::mov, dest, src, {});
   }
 
-  Variable_id emit_load(Variable_id dest, Value addr) {
-    return emit(IR_op::load, dest, addr, {});
+  Ir::Variable emit_load(Ir::Variable dest, Ir::Value addr) {
+    return emit(Ir::Op::load, dest, addr, {});
   }
 
-  Value emit_store(Value value, Value addr) {
-    (void) emit(IR_op::store, {}, addr, value);
+  Ir::Value emit_store(Ir::Value value, Ir::Value addr) {
+    (void) emit(Ir::Op::store, {}, addr, value);
     return value;
   }
 
@@ -71,20 +71,20 @@ struct Compiler {
     return Label(emitted_code.size());
   }
 
-  void emit_jump_to(Label label, Value condition = Constant(true)) {
-    emit(IR_op::jump, {}, condition, Constant(label));
+  void emit_jump_to(Label label, Ir::Value condition = Ir::Constant(true)) {
+    emit(Ir::Op::jump, {}, condition, Ir::Constant(label));
   }
 
   using Jump_id = size_t;
 
-  Jump_id emit_unpatched_jump(Value condition = Constant(true)) {
+  Jump_id emit_unpatched_jump(Ir::Value condition = Ir::Constant(true)) {
     size_t result = emitted_code.size();
-    emit(IR_op::jump, {}, condition, Constant(unpatched_jump_magic));
+    emit(Ir::Op::jump, {}, condition, Ir::Constant(unpatched_jump_magic));
     return result;
   }
 
   void patch_jump_to_here(Jump_id id) {
-    int32_t& value = emitted_code[id].src2.as<Constant>().value;
+    int32_t& value = emitted_code[id].src2.as<Ir::Constant>().value;
     assert(value == unpatched_jump_magic);
     value = label_here();
   }
@@ -94,16 +94,16 @@ struct Compiler {
   // They must take AST nodes and not values, because they contain logic
   // as to what gets evaluated or not.
 
-  Variable_id emit_set(std::string_view name, Ast::Node& value) {
+  Ir::Variable emit_set(std::string_view name, Ast::Node& value) {
     auto [it, is_new] = variables.try_emplace(name);
-    Variable_id& dest = it->second;
+    Ir::Variable& dest = it->second;
     if (is_new)
       dest = new_var();
     return emit_mov(dest, compile_node(value));
   }
 
-  Variable_id emit_if(Ast::Node& cond_expr, Ast::Node& then_expr, Ast::Node& else_expr) {
-    Variable_id result = new_var();
+  Ir::Variable emit_if(Ast::Node& cond_expr, Ast::Node& then_expr, Ast::Node& else_expr) {
+    Ir::Variable result = new_var();
 
     auto jump_to_then = emit_unpatched_jump(compile_node(cond_expr));
     emit_mov(result, compile_node(else_expr));
@@ -116,18 +116,18 @@ struct Compiler {
     return result;
   }
 
-  Constant emit_while(Ast::Node& cond_expr, Ast::Node& loop_expr) {
+  Ir::Constant emit_while(Ast::Node& cond_expr, Ast::Node& loop_expr) {
     auto top = label_here();
     auto cond = compile_node(cond_expr);
-    auto inverse_cond = emit(IR_op::cmp_equ, new_var(), cond, Constant(0));
+    auto inverse_cond = emit(Ir::Op::cmp_equ, new_var(), cond, Ir::Constant(0));
     auto jump_to_end = emit_unpatched_jump(inverse_cond);
     (void) compile_node(loop_expr);
     emit_jump_to(top);
     patch_jump_to_here(jump_to_end);
-    return Constant(0);
+    return Ir::Constant(0);
   }
 
-  std::optional<Value> maybe_emit_intrinsic
+  std::optional<Ir::Value> maybe_emit_intrinsic
   (std::string_view func_name, std::span<Ast::Node> args) {
     if (func_name == "set") {
       // Set a variable to a value, and return this value
@@ -149,7 +149,7 @@ struct Compiler {
         error("Syntax: (alloc-static CONSTANT-AMOUNT)");
       auto address = int32_t(static_data.size());
       static_data.resize(static_data.size() + args[0].as<Ast::Number>().value);
-      return Constant(address);
+      return Ir::Constant(address);
     }
     return std::nullopt;
   }
@@ -159,13 +159,13 @@ struct Compiler {
   // They unconditionally evaluate all arguments,
   // and we know what code to generate for them.
 
-  std::optional<Value> maybe_emit_nary
-  (std::string_view func_name, std::span<const Value> inputs) {
-    std::optional<IR_op> op;
+  std::optional<Ir::Value> maybe_emit_nary
+  (std::string_view func_name, std::span<const Ir::Value> inputs) {
+    std::optional<Ir::Op> op;
     if (func_name == "+")
-      op = IR_op::add;
+      op = Ir::Op::add;
     else if (func_name == "*")
-      op = IR_op::mul;
+      op = Ir::Op::mul;
 
     if (!op)
       return std::nullopt;
@@ -173,28 +173,28 @@ struct Compiler {
     if (inputs.size() < 2)
       error("'{}' needs at least 2 arguments, got {}", func_name, inputs.size());
 
-    Value latest = inputs[0];
+    Ir::Value latest = inputs[0];
     for (size_t i = 1; i < inputs.size(); i++)
       latest = emit(*op, new_var(), latest, inputs[i]);
     return latest;
   }
 
-  std::optional<Value> maybe_emit_binop
-  (std::string_view func_name, std::span<const Value> inputs) {
-    std::optional<IR_op> op;
+  std::optional<Ir::Value> maybe_emit_binop
+  (std::string_view func_name, std::span<const Ir::Value> inputs) {
+    std::optional<Ir::Op> op;
 
     if (func_name == "-")
-      op = IR_op::sub;
+      op = Ir::Op::sub;
     else if (func_name == "/")
-      op = IR_op::div;
+      op = Ir::Op::div;
     else if (func_name == "%")
-      op = IR_op::mod;
+      op = Ir::Op::mod;
     else if (func_name == "=")
-      op = IR_op::cmp_equ;
+      op = Ir::Op::cmp_equ;
     else if (func_name == ">")
-      op = IR_op::cmp_gt;
+      op = Ir::Op::cmp_gt;
     else if (func_name == "<")
-      op = IR_op::cmp_lt;
+      op = Ir::Op::cmp_lt;
 
     if (!op)
       return std::nullopt;
@@ -208,32 +208,32 @@ struct Compiler {
   // =========================================================================
   // Compilation of high-level langauge constructs.
 
-  Value compile_node(Ast::Node& node) {
+  Ir::Value compile_node(Ast::Node& node) {
     return node.match(
-      [&] (Ast::Identifier& ident) -> Value {
+      [&] (Ast::Identifier& ident) -> Ir::Value {
         auto it = variables.find(ident.name);
         if (it == variables.end())
           error("No variable named '{}' was declared", ident.name);
-        return Variable_id(it->second);
+        return Ir::Variable(it->second);
       },
-      [&] (Ast::Number number) -> Value {
-        return Constant(number.value);
+      [&] (Ast::Number number) -> Ir::Value {
+        return Ir::Constant(number.value);
       },
-      [&] (Ast::String& string) -> Value {
+      [&] (Ast::String& string) -> Ir::Value {
         static_data.reserve(static_data.size() + 1 + string.value.size());
         uint32_t address = static_data.size();
         static_data.push_back(string.value.size());
         for (char c: string.value)
           static_data.push_back(c);
-        return Constant(static_cast<int32_t>(address));
+        return Ir::Constant(static_cast<int32_t>(address));
       },
-      [&] (Ast::Parens& parens) -> Value {
+      [&] (Ast::Parens& parens) -> Ir::Value {
         return compile_parens(parens);
       }
     );
   }
 
-  Value compile_parens(Ast::Parens& expr) {
+  Ir::Value compile_parens(Ast::Parens& expr) {
     std::span terms = expr.children;
     assert(!terms.empty()); // Should have been a parse error
 
@@ -250,7 +250,7 @@ struct Compiler {
       return *intrinsic;
 
     // Evaluate arguments
-    std::vector<Value> inputs;
+    std::vector<Ir::Value> inputs;
     inputs.reserve(arguments.size());
     for (auto& arg: arguments)
       inputs.push_back(compile_node(arg));
@@ -261,7 +261,7 @@ struct Compiler {
     if (auto nary = maybe_emit_nary(func_name, inputs))
       return *nary;
 
-    // Kind of an intrinsic, but it also just evaluates all arguments anyway
+    // Kind of intrinsics, but these do evaluate all their arguments
     if (func_name == "progn") {
       if (inputs.empty())
         error("'{}' needs at least one argument", func_name);
@@ -282,7 +282,7 @@ struct Compiler {
 
 } // anon namespace
 
-IR_output compile(Ast& ast) {
+Ir Ir::compile(Ast& ast) {
   Compiler compiler;
 
   // - Reserve a word at 0x0 for a jump to the code
@@ -292,7 +292,8 @@ IR_output compile(Ast& ast) {
   for (auto& expr: ast.toplevel_exprs)
     compiler.compile_parens(expr);
 
-  compiler.emit(IR_op::halt, {}, {}, {});
+  // Add a final halt
+  compiler.emit(Ir::Op::halt, {}, {}, {});
 
   return {
     .code = std::move(compiler.emitted_code),

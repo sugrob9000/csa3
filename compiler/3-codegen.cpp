@@ -2,43 +2,49 @@
 #include "stages.hpp"
 #include <algorithm>
 #include <fmt/core.h>
-#include <iostream>
+#include <fmt/format.h>
 #include <numeric>
 #include <span>
 
 namespace {
 
-// ===========================================================================
-
-bool has_dest(IR_op op) {
-  return op != IR_op::halt
-      && op != IR_op::jump
-      && op != IR_op::store;
+bool has_dest(Ir::Op op) {
+  return op != Ir::Op::halt
+      && op != Ir::Op::jump
+      && op != Ir::Op::store;
 }
 
-bool has_src1(IR_op op) {
-  return op != IR_op::halt;
+bool has_src1(Ir::Op op) {
+  return op != Ir::Op::halt;
 }
 
-bool has_src2(IR_op op) {
-  return op != IR_op::halt
-      && op != IR_op::mov
-      && op != IR_op::load;
+bool has_src2(Ir::Op op) {
+  return op != Ir::Op::halt
+      && op != Ir::Op::mov
+      && op != Ir::Op::load;
 }
+
+// Used as general-purpose tags (in sum types) throughout the codegen pass
+struct Register { uint8_t id; };
+struct Immediate { uint32_t value; };
+struct Address { uint32_t addr; };
 
 // ===========================================================================
 // Register coloring.
 
-struct Register_id { uint8_t id; };
-
 // 2 registers are reserved for loads of spilled values and stores thereto.
 // An instruction might have had both its source operands spilled, so we need 2.
 
-constexpr int num_available_regs = 3;
-//constexpr int num_available_regs = 62;
+//#define FEWER_REGISTERS // Give the compiler fewer registers to test spilling
 
-constexpr Register_id scratch_reg1 = { 62 };
-constexpr Register_id scratch_reg2 = { 63 };
+#ifdef FEWER_REGISTERS
+constexpr int num_available_regs = 3;
+#else
+constexpr int num_available_regs = 62;
+#endif
+
+constexpr Register scratch_reg1 = { 62 };
+constexpr Register scratch_reg2 = { 63 };
 
 // A variable is considered alive between its first and last usage, inclusive
 struct Lifetime {
@@ -46,13 +52,13 @@ struct Lifetime {
   int end = std::numeric_limits<int>::min();
 };
 
-auto build_var_lifetimes(int num_variables, std::span<IR_insn> code) {
+auto build_var_lifetimes(int num_variables, std::span<Ir::Insn> code) {
 	std::vector<Lifetime> result(num_variables);
 
   for (int insn_id = 0; insn_id < code.size(); insn_id++) {
-    const auto maybe_update_lifetime = [&] (Value v) {
-      if (v.is<Variable_id>()) {
-				auto& life = result[v.as<Variable_id>().id];
+    const auto maybe_update_lifetime = [&] (Ir::Value v) {
+      if (v.is<Ir::Variable>()) {
+				auto& life = result[v.as<Ir::Variable>().id];
 				life.start = std::min(life.start, insn_id);
 				life.end = std::max(life.end, insn_id);
       }
@@ -67,8 +73,10 @@ auto build_var_lifetimes(int num_variables, std::span<IR_insn> code) {
 }
 
 // The places a variable can be assigned to live in
-struct Memory_addr { uint32_t addr; }; // Will need patching after coloring
-using Location = One_of<Memory_addr, Register_id>;
+using Location = One_of<
+  Address, // Will need patching after coloring
+  Register
+>;
 
 struct Coloring_result {
   std::vector<Location> locs;
@@ -93,7 +101,7 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
     .locs = std::vector<Location>(lives.size()),
     .num_spilled_variables = 0
   };
-  int32_t next_memory_addr = 0;
+  int32_t next_memory_addr = 0; // pseudo addresses; just base them on 0 for now
 
   for (int i = 0; i < lives.size(); i++) {
     int our_id = vars_by_life_length[i];
@@ -103,7 +111,7 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
     for (int j = 0; j < i; j++) {
       int their_id = vars_by_life_length[j];
       auto& their_life = lives[their_id];
-      auto their_reg = result.locs[their_id].maybe_as<Register_id>();
+      auto their_reg = result.locs[their_id].maybe_as<Register>();
       if (their_reg
       && our_life.end >= their_life.start
       && our_life.start <= their_life.end)
@@ -113,14 +121,14 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
     bool found_register = false;
     for (int reg_id = 0; reg_id < num_available_regs; reg_id++) {
       if (!taken[reg_id]) {
-        result.locs[our_id] = Register_id(reg_id);
+        result.locs[our_id] = Register(reg_id);
         found_register = true;
         break;
       }
     }
 
     if (!found_register) {
-      result.locs[our_id] = Memory_addr(next_memory_addr++);
+      result.locs[our_id] = Address(next_memory_addr++);
       result.num_spilled_variables++;
     }
   }
@@ -132,7 +140,7 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
 // ===========================================================================
 // Memory-aware codegen.
 
-// Most of the same operations as the abstract `IR_op`, but
+// Most of the same operations as the abstract `Ir::Op`, but
 // without mov (`add X, 0` suffices) and with loads and stores
 
 enum class Hw_op: uint8_t {
@@ -151,9 +159,6 @@ enum class Hw_op: uint8_t {
   jmp_if = 0xC,
 };
 
-struct Immediate { uint32_t value; };
-using Hw_value = One_of<Register_id, Immediate>;
-
 struct Codegen {
   std::vector<uint32_t> static_data;
   std::vector<uint32_t> hw_code;
@@ -168,24 +173,24 @@ struct Codegen {
   void pre_fixup_spilled_variables() {
     size_t old_top = static_data.size();
     for (auto& loc: coloring.locs) {
-      if (auto mem = loc.maybe_as<Memory_addr>())
+      if (auto mem = loc.maybe_as<Address>())
         mem->addr += old_top;
     }
     static_data.resize(old_top + coloring.num_spilled_variables);
   }
 
-  bool is_spilled(Variable_id var) { return coloring.locs[var.id].is<Memory_addr>(); }
-  static bool is_large_for_binop(Constant c) { return c.value >= (1u << 10); }
+  bool is_spilled(Ir::Variable var) { return coloring.locs[var.id].is<Address>(); }
+  static bool is_large_for_binop(Ir::Constant c) { return c.value >= (1u << 10); }
 
-  Memory_addr spill_constant(Constant c) {
+  Address spill_constant(Ir::Constant c) {
     auto addr = uint32_t(static_data.size());
     static_data.push_back(c.value);
-    return Memory_addr(addr);
+    return Address(addr);
   }
 
   // Can only be called with external knowledge that this is valid
-  Register_id reg_of(Variable_id var) { return coloring.locs[var.id].as<Register_id>(); }
-  Memory_addr addr_of(Variable_id var) { return coloring.locs[var.id].as<Memory_addr>(); }
+  Register reg_of(Ir::Variable var) { return coloring.locs[var.id].as<Register>(); }
+  Address addr_of(Ir::Variable var) { return coloring.locs[var.id].as<Address>(); }
 
 
   // =========================================================================
@@ -229,23 +234,27 @@ struct Codegen {
   // =========================================================================
   // Emitting HW instructions
 
-  void emit_memop(Hw_op op, Register_id reg, Location addr) {
+  // Abuses the meaning of `Location`, but it has the tags we need
+  void emit_memop(Hw_op op, Register reg, Location addr) {
     assert(op == Hw_op::load || op == Hw_op::store);
     uint32_t high_bits = addr.match(
-      [] (Register_id reg2) -> uint32_t { return reg2.id << 11; },
-      [] (Memory_addr mem) -> uint32_t {
-        constexpr unsigned width = 21;
-        mem.addr &= (1u << width)-1;
-        return (1u << 10) | (mem.addr << 11);
+      [] (Register reg2) -> uint32_t {
+        return (1u << 10) | reg2.id << 11;
+      },
+      [] (Address mem) -> uint32_t {
+        if (mem.addr >= (1u << 21))
+          error("Absolute immediate address {:x} is too high for memop", mem.addr);
+        return mem.addr << 11;
       }
     );
     hw_code.push_back(static_cast<uint32_t>(op) | (reg.id << 4) | high_bits);
   }
 
-  void emit_binop(Hw_op op, Register_id dest, Hw_value src1, Hw_value src2) {
-    const auto convert_src = [] (Hw_value src) -> uint32_t {
+  using Binop_src = One_of<Register, Immediate>;
+  void emit_binop(Hw_op op, Register dest, Binop_src src1, Binop_src src2) {
+    const auto convert_src = [] (Binop_src src) -> uint32_t {
       return src.match(
-        [] (Register_id reg) { return 1u | (reg.id << 1); },
+        [] (Register reg) { return 1u | (reg.id << 1); },
         [] (Immediate imm) {
           assert(imm.value < (1u << 10));
           return imm.value << 1;
@@ -262,13 +271,13 @@ struct Codegen {
 
   void emit_jmp(uint32_t dest) {
     if (dest >= (1u << 28))
-      error("Tried to jmp to absolute immediate address {} -- too large", dest);
+      error("Absolute immediate address {:x} is too high for jmp", dest);
     hw_code.push_back(static_cast<uint32_t>(Hw_op::jmp) | (dest << 4));
   }
 
-  void emit_jmp_if(Register_id condition, uint32_t dest) {
+  void emit_jmp_if(Register condition, uint32_t dest) {
     if (dest >= (1u << 22))
-      error("Tried to jmp-if to absolute immediate address {} -- too large", dest);
+      error("Absolute immediate address {:x} is too high for jmp-if", dest);
     hw_code.push_back(
       static_cast<uint32_t>(Hw_op::jmp_if) |
       (condition.id << 4) |
@@ -277,18 +286,19 @@ struct Codegen {
   }
 
   // =========================================================================
-  // Handling IR instructions
+  // Handling higher-level IR instructions to emit low-level HW instructions.
+  // Note that an IR instruction may correspond to zero, one, or more HW instructions
 
   // Put a constant into a register.
   // This may require a load if it does not fit into an immediate
-  void handle_fetch_const(Register_id dest, Constant src) {
+  void handle_fetch_const(Register dest, Ir::Constant src) {
     if (is_large_for_binop(src))
       emit_memop(Hw_op::load, dest, spill_constant(src));
     else
       emit_binop(Hw_op::add, dest, Immediate(src.value), Immediate(0));
   }
 
-  void handle_mov(Variable_id dest, Value src) {
+  void handle_mov(Ir::Variable dest, Ir::Value src) {
     // --- Situation ---  ---- What do ----
     // 1.  reg <- reg     add R,0
     // 2.  reg <- mem     load
@@ -299,13 +309,13 @@ struct Codegen {
 
     int dest_type = is_spilled(dest) ? 1 : 0;
     int src_type = src.match(
-      [&] (Variable_id var) { return is_spilled(var) ? 1 : 0; },
-      [] (Constant) { return 2; }
+      [&] (Ir::Variable var) { return is_spilled(var) ? 1 : 0; },
+      [] (Ir::Constant) { return 2; }
     );
 
-    const auto src_reg = [&] { return reg_of(src.as<Variable_id>()); };
-    const auto src_addr = [&] { return addr_of(src.as<Variable_id>()); };
-    const auto src_const = [&] { return src.as<Constant>(); };
+    const auto src_reg = [&] { return reg_of(src.as<Ir::Variable>()); };
+    const auto src_addr = [&] { return addr_of(src.as<Ir::Variable>()); };
+    const auto src_const = [&] { return src.as<Ir::Constant>(); };
 
     // See table above
     int situation = 1 + src_type + 3 * dest_type;
@@ -327,7 +337,7 @@ struct Codegen {
     }
   }
 
-  void handle_load(Variable_id dest, Value addr) {
+  void handle_load(Ir::Variable dest, Ir::Value addr) {
     // ---- Situation ----  ---- What do ----
     // 1. reg <- mem[imm]   load imm
     // 2. reg <- mem[reg]   load reg
@@ -337,17 +347,17 @@ struct Codegen {
     // 6. mem <- mem[mem]   load imm + load reg + store imm
 
     // There is no provision for pointers which are too large,
-    // those will just break codegen :(
+    // those will just cause broken codegen :(
 
     int dest_type = is_spilled(dest) ? 1 : 0;
     int src_type = addr.match(
-      [] (Constant) { return 0; },
-      [&] (Variable_id var) { return is_spilled(var) ? 2 : 1; }
+      [] (Ir::Constant) { return 0; },
+      [&] (Ir::Variable var) { return is_spilled(var) ? 2 : 1; }
     );
 
-    const auto addr_imm = [&] { return Memory_addr(addr.as<Constant>().value); };
-    const auto addr_reg = [&] { return reg_of(addr.as<Variable_id>()); };
-    const auto addr_mem = [&] { return addr_of(addr.as<Variable_id>()); };
+    const auto addr_imm = [&] { return Address(addr.as<Ir::Constant>().value); };
+    const auto addr_reg = [&] { return reg_of(addr.as<Ir::Variable>()); };
+    const auto addr_mem = [&] { return addr_of(addr.as<Ir::Variable>()); };
 
     // See table above
     int situation = 1 + src_type + 3 * dest_type;
@@ -372,15 +382,18 @@ struct Codegen {
       emit_memop(load, scratch_reg1, scratch_reg1);
       emit_memop(store, scratch_reg1, addr_of(dest));
       return;
-    default: __builtin_unreachable();
+    default: unreachable();
     }
   }
 
-  void handle_store(Value addr, Value src) {
+  void handle_store(Ir::Value addr, Ir::Value src) {
+    // To reduce compiler complexity, we never emit store-imm for an IR store,
+    // even if addr is a small constant...
+
     // Get the stored value into scratch_reg1 anyhow
     src.match(
-      [&] (Constant c) { handle_fetch_const(scratch_reg1, c); },
-      [&] (Variable_id var) {
+      [&] (Ir::Constant c) { handle_fetch_const(scratch_reg1, c); },
+      [&] (Ir::Variable var) {
         if (is_spilled(var))
           emit_memop(Hw_op::load, scratch_reg1, addr_of(var));
         else
@@ -388,13 +401,12 @@ struct Codegen {
       }
     );
 
-    // For compiler complexity reasons, we never emit store-imm for an IR store...
-    Register_id addr_reg = addr.match(
-      [&] (Constant c) {
+    Register addr_reg = addr.match(
+      [&] (Ir::Constant c) {
         handle_fetch_const(scratch_reg2, c);
         return scratch_reg2;
       },
-      [&] (Variable_id var) {
+      [&] (Ir::Variable var) {
         if (!is_spilled(var))
           return reg_of(var);
         emit_memop(Hw_op::load, scratch_reg2, addr_of(var));
@@ -406,30 +418,30 @@ struct Codegen {
     emit_memop(Hw_op::store, scratch_reg1, addr_reg);
   }
 
-  void handle_binop(IR_insn& insn) {
+  void handle_binop(Ir::Insn& insn) {
     Hw_op op = [&] {
       switch (insn.op) {
-      case IR_op::add: return Hw_op::add;
-      case IR_op::sub: return Hw_op::sub;
-      case IR_op::mul: return Hw_op::mul;
-      case IR_op::div: return Hw_op::div;
-      case IR_op::mod: return Hw_op::mod;
-      case IR_op::cmp_equ: return Hw_op::cmp_equ;
-      case IR_op::cmp_gt: return Hw_op::cmp_gt;
-      case IR_op::cmp_lt: return Hw_op::cmp_lt;
-      default: __builtin_unreachable();
+      case Ir::Op::add: return Hw_op::add;
+      case Ir::Op::sub: return Hw_op::sub;
+      case Ir::Op::mul: return Hw_op::mul;
+      case Ir::Op::div: return Hw_op::div;
+      case Ir::Op::mod: return Hw_op::mod;
+      case Ir::Op::cmp_equ: return Hw_op::cmp_equ;
+      case Ir::Op::cmp_gt: return Hw_op::cmp_gt;
+      case Ir::Op::cmp_lt: return Hw_op::cmp_lt;
+      default: unreachable();
       }
     }();
 
-    const auto convert_src = [&] (Register_id scratch, Value ir_src) {
+    const auto convert_src = [&] (Register scratch, Ir::Value ir_src) {
       return ir_src.match(
-        [&] (Variable_id var) -> Hw_value {
+        [&] (Ir::Variable var) -> Binop_src {
           if (!is_spilled(var))
             return reg_of(var);
           emit_memop(Hw_op::load, scratch, addr_of(var));
           return scratch;
         },
-        [&] (Constant c) -> Hw_value {
+        [&] (Ir::Constant c) -> Binop_src {
           if (!is_large_for_binop(c))
             return Immediate(c.value);
           emit_memop(Hw_op::load, scratch, spill_constant(c));
@@ -438,8 +450,8 @@ struct Codegen {
       );
     };
 
-    Hw_value src1 = convert_src(scratch_reg1, insn.src1);
-    Hw_value src2 = convert_src(scratch_reg2, insn.src2);
+    Binop_src src1 = convert_src(scratch_reg1, insn.src1);
+    Binop_src src2 = convert_src(scratch_reg2, insn.src2);
 
     if (is_spilled(insn.dest)) {
       emit_binop(op, scratch_reg1, src1, src2);
@@ -449,32 +461,31 @@ struct Codegen {
     }
   }
 
-  void handle_jump(Value condition, Constant where) {
+  void handle_jump(Ir::Value condition, Address where) {
     jumps_hw_pos.push_back(hw_code.size());
     condition.match(
-      [&] (Constant c) {
+      [&] (Ir::Constant c) {
         if (c.value != 0)
-          emit_jmp(where.value);
+          emit_jmp(where.addr);
       },
-      [&] (Variable_id var) {
+      [&] (Ir::Variable var) {
         if (is_spilled(var)) {
           emit_memop(Hw_op::load, scratch_reg1, addr_of(var));
-          emit_jmp_if(scratch_reg1, where.value);
+          emit_jmp_if(scratch_reg1, where.addr);
         } else {
-          emit_jmp_if(reg_of(var), where.value);
+          emit_jmp_if(reg_of(var), where.addr);
         }
       }
     );
   }
 
-  void handle_ir_insn(IR_insn& insn) {
+  void handle_ir_insn(Ir::Insn& insn) {
     ir_to_hw_pos.push_back(hw_code.size()); // Maintain the IR pos -> HW pos mapping
-
     switch (insn.op) {
-      using enum IR_op;
+      using enum Ir::Op;
     case halt: return hw_code.push_back(static_cast<uint32_t>(Hw_op::halt));
     case mov: return handle_mov(insn.dest, insn.src1);
-    case jump: return handle_jump(insn.src1, insn.src2.as<Constant>());
+    case jump: return handle_jump(insn.src1, Address(insn.src2.as<Ir::Constant>().value));
     case load: return handle_load(insn.dest, insn.src1);
     case store: return handle_store(insn.src1, insn.src2);
     default: return handle_binop(insn);
@@ -482,27 +493,114 @@ struct Codegen {
   }
 };
 
+
 } // anon namespace
 
 
-void emit_image(std::ostream& os, IR_output&& ir) {
+Hw_image Hw_image::from_ir(Ir&& ir) {
   Codegen codegen;
 
   auto code = std::move(ir.code);
   codegen.static_data = std::move(ir.data);
 
-  {
+  { // Assign variables to locations
     auto lifetimes = build_var_lifetimes(ir.num_variables, code);
     codegen.coloring = color_variables(lifetimes);
   }
 
+  // Perform code generation
   codegen.pre_fixup_spilled_variables();
-
-  for (IR_insn& insn: code)
+  for (Ir::Insn& insn: code)
     codegen.handle_ir_insn(insn);
-
   codegen.post_fixup_jumps();
 
-  disasm_hw(codegen.static_data, codegen.hw_code);
-  (void) os;
+  // Gather result
+  Hw_image result;
+  result.data_break = codegen.static_data.size();
+  result.words = std::move(codegen.static_data);
+  result.words.insert(result.words.end(), codegen.hw_code.begin(), codegen.hw_code.end());
+  return result;
+}
+
+// ===========================================================================
+// Disassembly for debugging
+
+struct Imm_or_reg { uint32_t encoded; };
+
+template<> struct fmt::formatter<Imm_or_reg> {
+  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
+  appender format(Imm_or_reg src, format_context& ctx) {
+    if (src.encoded & 1)
+      return format_to(ctx.out(), "r{}", src.encoded >> 1);
+    else
+      return format_to(ctx.out(), "0x{:x}", src.encoded >> 1);
+  }
+};
+
+struct Disassembler {
+  int current_addr;
+  std::span<const uint32_t> words;
+
+  constexpr static std::string_view insn_names[] = {
+    "halt",
+    "ld", "st",
+    "add", "sub", "mul", "div", "mod",
+    "equ", "gt ", "lt ",
+    "jmp", "jif",
+  };
+
+  void disasm_raw(std::string_view tag) {
+    fmt::print("{:3x}: ({}) 0x{:x}\n", current_addr, tag, words[current_addr]);
+    current_addr++;
+  }
+
+  void disasm_insn() {
+    uint32_t insn = words[current_addr];
+    uint32_t opcode = insn & 0xF;
+
+    const auto fmt_operands = [&] () -> std::string {
+      switch (static_cast<Hw_op>(opcode)) {
+        using enum Hw_op;
+      case halt: return fmt::format("0x{:x}", insn >> 4);
+      case load:
+      case store:
+        return fmt::format(
+          "r{}, {}",
+          (insn >> 4) & 0x3F,
+          Imm_or_reg(insn >> 10)
+        );
+      case jmp: return fmt::format("0x{:x}", insn >> 4);
+      case jmp_if: return fmt::format("r{}, 0x{:x}", (insn >> 4) & 0x3F, insn >> 10);
+      default:
+        return fmt::format(
+          "r{}, {}, {}", (insn >> 4) & 0x3F,
+          Imm_or_reg((insn >> 10) & 0x7FF),
+          Imm_or_reg(insn >> 21)
+        );
+      }
+    };
+
+    fmt::print("{:3x}: ", current_addr);
+    if (opcode < 0xD)
+      fmt::print("{} {}\n", insn_names[opcode], fmt_operands());
+    else
+      fmt::print("??? 0x{:08x}\n", insn);
+    current_addr++;
+  }
+};
+
+void Hw_image::disasm() const {
+  Disassembler dis = {
+    .current_addr = 0,
+    .words = words
+  };
+
+  dis.disasm_insn(); // first jmp
+  dis.disasm_raw("mmio");
+
+  while (dis.current_addr < data_break)
+    dis.disasm_raw("data");
+
+  while (dis.current_addr < dis.words.size())
+    dis.disasm_insn();
 }
