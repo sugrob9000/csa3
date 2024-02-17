@@ -32,3 +32,5 @@ struct One_of: std::variant<Args...> {
     return std::visit(Visitor{ std::forward<Fs>(fs)... }, *this);
   }
 };
+
+[[noreturn]] inline void unreachable() { __builtin_unreachable(); }

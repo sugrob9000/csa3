@@ -41,6 +41,15 @@ struct Compiler {
     return emit(IR_op::mov, dest, src, {});
   }
 
+  Variable_id emit_load(Variable_id dest, Value addr) {
+    return emit(IR_op::load, dest, addr, {});
+  }
+
+  Value emit_store(Value value, Value addr) {
+    (void) emit(IR_op::store, {}, addr, value);
+    return value;
+  }
+
   // =========================================================================
   // Emitting jumps.
   // With forward jumps, we first emit the jump, then later its label:
@@ -128,13 +137,19 @@ struct Compiler {
     } else if (func_name == "if") {
       // Depending on the condition, only evaluate one of the arguments
       if (args.size() != 3)
-        error("Syntax: (if cond-expr then-expr else-expr)");
+        error("Syntax: (if COND-EXPR THEN-EXPR ELSE-EXPR)");
       return emit_if(args[0], args[1], args[2]);
     } else if (func_name == "while") {
       // Evaluate loop-expr, always return 0
       if (args.size() != 2)
-        error("Syntax: (while cond-expr loop-expr)");
+        error("Syntax: (while COND-EXPR LOOP-EXPR)");
       return emit_while(args[0], args[1]);
+    } else if (func_name == "alloc-static") {
+      if (args.size() != 1 || !args[0].is<Ast::Number>())
+        error("Syntax: (alloc-static CONSTANT-AMOUNT)");
+      auto address = int32_t(static_data.size());
+      static_data.resize(static_data.size() + args[0].as<Ast::Number>().value);
+      return Constant(address);
     }
     return std::nullopt;
   }
@@ -251,6 +266,14 @@ struct Compiler {
       if (inputs.empty())
         error("'{}' needs at least one argument", func_name);
       return inputs.back();
+    } else if (func_name == "read-mem") {
+      if (inputs.size() != 1)
+        error("Syntax: (read-mem ADDR)");
+      return emit_load(new_var(), inputs[0]);
+    } else if (func_name == "write-mem") {
+      if (inputs.size() != 2)
+        error("Syntax: (write-mem ADDR VALUE)");
+      return emit_store(inputs[1], inputs[0]);
     }
 
     error("'{}' is not a known function", func_name);
@@ -262,9 +285,9 @@ struct Compiler {
 IR_output compile(Ast& ast) {
   Compiler compiler;
 
-  // Reserve 1 word at address 0x0 for an instruction that
-  // jumps over data, because 0x0 is the entry point
-  compiler.static_data.emplace_back();
+  // - Reserve a word at 0x0 for a jump to the code
+  // - Reserve a word at 0x1 for MMIO
+  compiler.static_data.resize(2);
 
   for (auto& expr: ast.toplevel_exprs)
     compiler.compile_parens(expr);

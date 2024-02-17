@@ -29,7 +29,7 @@ struct Ast {
 // Stage 2: abstract compilation into an IR
 //
 // Turning the above tree representation into a stream of "abstract" instructions.
-// This instruction set has no concept of memory or limited registers, etc.
+// This instruction set has no concept of limited registers.
 // (Not SSA: we still have labels and plain jumps instead of basic blocks,
 //  and variables can be assigned to multiple times)
 //
@@ -43,17 +43,19 @@ struct Ast {
 //    [r1] <- mem(32)
 //    [r3] <- [r0] + [r1]
 //
-// As such, this instruction set has no loads or stores.
-// A later codegen pass will color the values onto registers
-// and generate appropriate spills.
+// In this instruction set, loads and stores only happen when requested by code.
+// A later codegen pass will color the values onto registers and generate
+// appropriate spills, too.
 
 struct Constant { int32_t value; };
 struct Variable_id { int id; };
 using Value = One_of<Constant, Variable_id>;
 
 enum class IR_op {
-  halt, // no dest, no src1, no src2
-  mov,  // no src2
+  halt,  // no dest, no src1, no src2
+  mov,   // no src2
+  load,  // no src2
+  store, // no dest, src1 is addr, src2 is value
   add, sub, mul, div, mod,
   cmp_equ, cmp_gt, cmp_lt,
   jump, // no dest, src1 is condition, src2 is target (must be Constant)

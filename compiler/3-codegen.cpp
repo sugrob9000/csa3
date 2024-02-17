@@ -12,7 +12,8 @@ namespace {
 
 bool has_dest(IR_op op) {
   return op != IR_op::halt
-      && op != IR_op::jump;
+      && op != IR_op::jump
+      && op != IR_op::store;
 }
 
 bool has_src1(IR_op op) {
@@ -21,7 +22,8 @@ bool has_src1(IR_op op) {
 
 bool has_src2(IR_op op) {
   return op != IR_op::halt
-      && op != IR_op::mov;
+      && op != IR_op::mov
+      && op != IR_op::load;
 }
 
 // ===========================================================================
@@ -32,7 +34,8 @@ struct Register_id { uint8_t id; };
 // 2 registers are reserved for loads of spilled values and stores thereto.
 // An instruction might have had both its source operands spilled, so we need 2.
 
-constexpr int num_available_regs = 62;
+constexpr int num_available_regs = 3;
+//constexpr int num_available_regs = 62;
 
 constexpr Register_id scratch_reg1 = { 62 };
 constexpr Register_id scratch_reg2 = { 63 };
@@ -65,10 +68,10 @@ auto build_var_lifetimes(int num_variables, std::span<IR_insn> code) {
 
 // The places a variable can be assigned to live in
 struct Memory_addr { uint32_t addr; }; // Will need patching after coloring
-using Variable_location = One_of<Memory_addr, Register_id>;
+using Location = One_of<Memory_addr, Register_id>;
 
 struct Coloring_result {
-  std::vector<Variable_location> locs;
+  std::vector<Location> locs;
   int num_spilled_variables;
 };
 
@@ -87,7 +90,7 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
   // becoming more likely to grab registers (and because their life is shorter,
   // being less likely to interfere with others).
   Coloring_result result = {
-    .locs = std::vector<Variable_location>(lives.size()),
+    .locs = std::vector<Location>(lives.size()),
     .num_spilled_variables = 0
   };
   int32_t next_memory_addr = 0;
@@ -156,7 +159,6 @@ struct Codegen {
   std::vector<uint32_t> hw_code;
   Coloring_result coloring;
 
-
   // =========================================================================
   // Dealing with variables
 
@@ -188,6 +190,12 @@ struct Codegen {
 
   // =========================================================================
   // Mapping IR jumps to HW jumps
+  //
+  // The IR jump offsets cannot be used as-are, because:
+  // 1. IR jumps base their offsets on the beginning of code, but we will put
+  //    code after data, and we only know how much data there is after codegen
+  // 2. Per an IR instruction, we may emit multiple or no HW instructions, so
+  //    "IR offset -> HW offset" is not a linear relationship
 
   // Track a mapping from indices into the IR -> indices into HW code.
   // This is needed for correctly emitting backward jumps.
@@ -221,21 +229,20 @@ struct Codegen {
   // =========================================================================
   // Emitting HW instructions
 
-  void emit_mem_imm(Hw_op op, Register_id reg, Memory_addr mem) {
+  void emit_memop(Hw_op op, Register_id reg, Location addr) {
     assert(op == Hw_op::load || op == Hw_op::store);
-    if (mem.addr >= (1u << 21))
-      error("Tried to access absolute immediate address {} -- too large", mem.addr);
-    hw_code.push_back(
-      static_cast<uint32_t>(op) |
-      (reg.id << 4) |
-      (1u << 10) |
-      (mem.addr << 11)
+    uint32_t high_bits = addr.match(
+      [] (Register_id reg2) -> uint32_t { return reg2.id << 11; },
+      [] (Memory_addr mem) -> uint32_t {
+        constexpr unsigned width = 21;
+        mem.addr &= (1u << width)-1;
+        return (1u << 10) | (mem.addr << 11);
+      }
     );
+    hw_code.push_back(static_cast<uint32_t>(op) | (reg.id << 4) | high_bits);
   }
 
   void emit_binop(Hw_op op, Register_id dest, Hw_value src1, Hw_value src2) {
-    const auto op_id = static_cast<uint32_t>(op);
-    assert(op_id >= 0x3 && op_id <= 0xA);
     const auto convert_src = [] (Hw_value src) -> uint32_t {
       return src.match(
         [] (Register_id reg) { return 1u | (reg.id << 1); },
@@ -246,7 +253,7 @@ struct Codegen {
       );
     };
     hw_code.push_back(
-      op_id |
+      static_cast<uint32_t>(op) |
       (dest.id << 4) |
       (convert_src(src1) << 10) |
       (convert_src(src2) << 21)
@@ -269,59 +276,134 @@ struct Codegen {
     );
   }
 
-
   // =========================================================================
   // Handling IR instructions
 
-  void handle_mov(Variable_id dest, Value src) {
-    // ----- Situation -----    ---- What do ----
-    // 1.  reg <- reg           add R,0
-    // 2.  reg <- mem           load
-    // 3.  reg <- small const   add I,0
-    // 4.  reg <- large const   load
-    // 5.  mem <- reg           store
-    // 6.  mem <- mem           load + store
-    // 7.  mem <- small const   add I,0 + store
-    // 8.  mem <- large const   load + store
+  // Put a constant into a register.
+  // This may require a load if it does not fit into an immediate
+  void handle_fetch_const(Register_id dest, Constant src) {
+    if (is_large_for_binop(src))
+      emit_memop(Hw_op::load, dest, spill_constant(src));
+    else
+      emit_binop(Hw_op::add, dest, Immediate(src.value), Immediate(0));
+  }
 
-    enum class Peer { reg = 0, mem = 1, small_const = 2, large_const = 3 };
-    const Peer dest_peer = is_spilled(dest) ? Peer::mem : Peer::reg;
-    const Peer src_peer = src.match(
-      [&] (Variable_id var) { return is_spilled(var) ? Peer::mem : Peer::reg; },
-      [] (Constant c) { return is_large_for_binop(c) ? Peer::large_const : Peer::small_const; }
+  void handle_mov(Variable_id dest, Value src) {
+    // --- Situation ---  ---- What do ----
+    // 1.  reg <- reg     add R,0
+    // 2.  reg <- mem     load
+    // 3.  reg <- const   fetch_const (add I,0 or load)
+    // 4.  mem <- reg     store
+    // 5.  mem <- mem     load + store
+    // 6.  mem <- const   fetch_const + store
+
+    int dest_type = is_spilled(dest) ? 1 : 0;
+    int src_type = src.match(
+      [&] (Variable_id var) { return is_spilled(var) ? 1 : 0; },
+      [] (Constant) { return 2; }
     );
 
     const auto src_reg = [&] { return reg_of(src.as<Variable_id>()); };
     const auto src_addr = [&] { return addr_of(src.as<Variable_id>()); };
     const auto src_const = [&] { return src.as<Constant>(); };
 
-    Memory_addr src_spilled_addr{};
-    if (src_peer == Peer::large_const)
-      src_spilled_addr = spill_constant(src_const());
-
-    // See comment at top of function; the numbers match
-    int situation = 1 + static_cast<int>(src_peer) + 4 * static_cast<int>(dest_peer);
+    // See table above
+    int situation = 1 + src_type + 3 * dest_type;
     switch (situation) {
       using enum Hw_op;
     case 1: return emit_binop(add, reg_of(dest), src_reg(), Immediate(0));
-    case 2: return emit_mem_imm(load, reg_of(dest), src_addr());
-    case 3: return emit_binop(add, reg_of(dest), Immediate(src_const().value), Immediate(0));
-    case 4: return emit_mem_imm(load, reg_of(dest), src_spilled_addr);
-    case 5: return emit_mem_imm(store, src_reg(), addr_of(dest));
+    case 2: return emit_memop(load, reg_of(dest), src_addr());
+    case 3: return handle_fetch_const(reg_of(dest), src_const());
+    case 4: return emit_memop(store, src_reg(), addr_of(dest));
+    case 5:
+      emit_memop(load, scratch_reg1, src_reg());
+      emit_memop(store, scratch_reg1, addr_of(dest));
+      return;
     case 6:
-      emit_mem_imm(load, scratch_reg1, src_addr());
-      emit_mem_imm(store, scratch_reg1, addr_of(dest));
+      handle_fetch_const(scratch_reg1, src_const());
+      emit_memop(store, scratch_reg1, addr_of(dest));
       return;
-    case 7:
-      emit_binop(add, scratch_reg1, Immediate(src_const().value), Immediate(0));
-      emit_mem_imm(store, scratch_reg1, addr_of(dest));
+    default: unreachable();
+    }
+  }
+
+  void handle_load(Variable_id dest, Value addr) {
+    // ---- Situation ----  ---- What do ----
+    // 1. reg <- mem[imm]   load imm
+    // 2. reg <- mem[reg]   load reg
+    // 3. reg <- mem[mem]   load imm + load reg
+    // 4. mem <- mem[imm]   load imm + store imm
+    // 5. mem <- mem[reg]   load reg + store imm
+    // 6. mem <- mem[mem]   load imm + load reg + store imm
+
+    // There is no provision for pointers which are too large,
+    // those will just break codegen :(
+
+    int dest_type = is_spilled(dest) ? 1 : 0;
+    int src_type = addr.match(
+      [] (Constant) { return 0; },
+      [&] (Variable_id var) { return is_spilled(var) ? 2 : 1; }
+    );
+
+    const auto addr_imm = [&] { return Memory_addr(addr.as<Constant>().value); };
+    const auto addr_reg = [&] { return reg_of(addr.as<Variable_id>()); };
+    const auto addr_mem = [&] { return addr_of(addr.as<Variable_id>()); };
+
+    // See table above
+    int situation = 1 + src_type + 3 * dest_type;
+    switch (situation) {
+      using enum Hw_op;
+    case 1: return emit_memop(load, reg_of(dest), addr_imm());
+    case 2: return emit_memop(load, reg_of(dest), addr_reg());
+    case 3:
+      emit_memop(load, scratch_reg1, addr_mem());
+      emit_memop(load, reg_of(dest), scratch_reg1);
       return;
-    case 8:
-      emit_mem_imm(load, scratch_reg1, src_spilled_addr);
-      emit_mem_imm(store, scratch_reg1, addr_of(dest));
+    case 4:
+      emit_memop(load, scratch_reg1, addr_imm());
+      emit_memop(store, scratch_reg1, addr_of(dest));
+      return;
+    case 5:
+      emit_memop(load, scratch_reg1, addr_reg());
+      emit_memop(store, scratch_reg1, addr_of(dest));
+      return;
+    case 6:
+      emit_memop(load, scratch_reg1, addr_mem());
+      emit_memop(load, scratch_reg1, scratch_reg1);
+      emit_memop(store, scratch_reg1, addr_of(dest));
       return;
     default: __builtin_unreachable();
     }
+  }
+
+  void handle_store(Value addr, Value src) {
+    // Get the stored value into scratch_reg1 anyhow
+    src.match(
+      [&] (Constant c) { handle_fetch_const(scratch_reg1, c); },
+      [&] (Variable_id var) {
+        if (is_spilled(var))
+          emit_memop(Hw_op::load, scratch_reg1, addr_of(var));
+        else
+          emit_binop(Hw_op::add, scratch_reg1, reg_of(var), Immediate(0));
+      }
+    );
+
+    // For compiler complexity reasons, we never emit store-imm for an IR store...
+    Register_id addr_reg = addr.match(
+      [&] (Constant c) {
+        handle_fetch_const(scratch_reg2, c);
+        return scratch_reg2;
+      },
+      [&] (Variable_id var) {
+        if (!is_spilled(var))
+          return reg_of(var);
+        emit_memop(Hw_op::load, scratch_reg2, addr_of(var));
+        return scratch_reg2;
+      }
+    );
+
+    // Perform the store
+    emit_memop(Hw_op::store, scratch_reg1, addr_reg);
   }
 
   void handle_binop(IR_insn& insn) {
@@ -344,13 +426,13 @@ struct Codegen {
         [&] (Variable_id var) -> Hw_value {
           if (!is_spilled(var))
             return reg_of(var);
-          emit_mem_imm(Hw_op::load, scratch, addr_of(var));
+          emit_memop(Hw_op::load, scratch, addr_of(var));
           return scratch;
         },
         [&] (Constant c) -> Hw_value {
           if (!is_large_for_binop(c))
             return Immediate(c.value);
-          emit_mem_imm(Hw_op::load, scratch, spill_constant(c));
+          emit_memop(Hw_op::load, scratch, spill_constant(c));
           return scratch;
         }
       );
@@ -361,7 +443,7 @@ struct Codegen {
 
     if (is_spilled(insn.dest)) {
       emit_binop(op, scratch_reg1, src1, src2);
-      emit_mem_imm(Hw_op::store, scratch_reg1, addr_of(insn.dest));
+      emit_memop(Hw_op::store, scratch_reg1, addr_of(insn.dest));
     } else {
       emit_binop(op, reg_of(insn.dest), src1, src2);
     }
@@ -376,7 +458,7 @@ struct Codegen {
       },
       [&] (Variable_id var) {
         if (is_spilled(var)) {
-          emit_mem_imm(Hw_op::load, scratch_reg1, addr_of(var));
+          emit_memop(Hw_op::load, scratch_reg1, addr_of(var));
           emit_jmp_if(scratch_reg1, where.value);
         } else {
           emit_jmp_if(reg_of(var), where.value);
@@ -393,6 +475,8 @@ struct Codegen {
     case halt: return hw_code.push_back(static_cast<uint32_t>(Hw_op::halt));
     case mov: return handle_mov(insn.dest, insn.src1);
     case jump: return handle_jump(insn.src1, insn.src2.as<Constant>());
+    case load: return handle_load(insn.dest, insn.src1);
+    case store: return handle_store(insn.src1, insn.src2);
     default: return handle_binop(insn);
     }
   }
@@ -420,6 +504,5 @@ void emit_image(std::ostream& os, IR_output&& ir) {
   codegen.post_fixup_jumps();
 
   disasm_hw(codegen.static_data, codegen.hw_code);
-
   (void) os;
 }

@@ -1,6 +1,5 @@
 #include "stages.hpp"
 #include <fmt/core.h>
-#include <span>
 
 struct Binop_src { uint32_t encoded; };
 
@@ -34,7 +33,11 @@ void disasm_hw(std::span<const uint32_t> data, std::span<const uint32_t> code) {
       break;
     case 0x1:
     case 0x2:
-      fmt::print("r{}, 0x{:x}", (insn >> 4) & 0x3F, insn >> 11);
+      fmt::print("r{}, ", (insn >> 4) & 0x3F);
+      if (insn & (1u << 10))
+        fmt::print("0x{:x}", insn >> 11);
+      else
+        fmt::print("[r{}]", insn >> 11);
       break;
     case 0xB:
       fmt::print("0x{:x}", insn >> 4);
