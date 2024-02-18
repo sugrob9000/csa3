@@ -35,13 +35,10 @@ struct Address { uint32_t addr; };
 // 2 registers are reserved for loads of spilled values and stores thereto.
 // An instruction might have had both its source operands spilled, so we need 2.
 
-//#define FEWER_REGISTERS // Give the compiler fewer registers to test spilling
+// Give the compiler fewer registers to test spilling behavior
+constexpr bool use_fewer_registers = true;
 
-#ifdef FEWER_REGISTERS
-constexpr int num_available_regs = 3;
-#else
-constexpr int num_available_regs = 62;
-#endif
+constexpr int num_available_regs = use_fewer_registers ? 3 : 62;
 
 constexpr Register scratch_reg1 = { 62 };
 constexpr Register scratch_reg2 = { 63 };
@@ -118,16 +115,10 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
         taken[their_reg->id] = true;
     }
 
-    bool found_register = false;
-    for (int reg_id = 0; reg_id < num_available_regs; reg_id++) {
-      if (!taken[reg_id]) {
-        result.locs[our_id] = Register(reg_id);
-        found_register = true;
-        break;
-      }
-    }
-
-    if (!found_register) {
+    auto free_reg = std::find(taken, taken + num_available_regs, false);
+    if (free_reg != std::end(taken)) {
+      result.locs[our_id] = Register(free_reg - taken);
+    } else {
       result.locs[our_id] = Address(next_memory_addr++);
       result.num_spilled_variables++;
     }
@@ -573,7 +564,8 @@ struct Disassembler {
       case jmp_if: return fmt::format("r{}, 0x{:x}", (insn >> 4) & 0x3F, insn >> 10);
       default:
         return fmt::format(
-          "r{}, {}, {}", (insn >> 4) & 0x3F,
+          "r{}, {}, {}",
+          (insn >> 4) & 0x3F,
           Imm_or_reg((insn >> 10) & 0x7FF),
           Imm_or_reg(insn >> 21)
         );
