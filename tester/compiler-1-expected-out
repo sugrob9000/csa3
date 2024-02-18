@@ -1,76 +1,48 @@
-data: []
-  0: mov #0 <- 0x7b528aa
-  1: mov #1 <- 0x7b528aa
-  2: mov #2 <- 0x7b528aa
-  3: mov #3 <- 0x7b528aa
-  4: mov #4 <- 0x7b528aa
-  5: mov #5 <- 0x7b528aa
-  6: mov #6 <- 0x0
-  7: lt: #7 <- #6, 0x14
-  8: equ: #8 <- #7, 0x0
-  9: jmp -> 0xd if #8
-  a: add: #9 <- #6, 0x1
-  b: mov #6 <- #9
-  c: jmp -> 0x7 if 0x1
-  d: equ: #10 <- 0x1, 0x0
-  e: jmp -> 0x10 if #10
-  f: jmp -> 0xd if 0x1
- 10: mov #6 <- 0x9c4400
- 11: add: #11 <- #0, 0x7b528aa
- 12: mov #6 <- #11
- 13: add: #13 <- #1, 0x7b528aa
- 14: mov #12 <- #13
- 15: add: #15 <- #2, 0x7b528aa
- 16: mov #14 <- #15
- 17: add: #17 <- #3, 0x7b528aa
- 18: mov #16 <- #17
- 19: add: #19 <- #4, 0x7b528aa
- 1a: mov #18 <- #19
- 1b: add: #21 <- #5, 0x7b528aa
- 1c: mov #20 <- #21
- 1d: halt
-22 variables colored onto 4 registers:
-  #0 -> reg #3
-  #1 -> MEM #0
-  #2 -> MEM #1
-  #3 -> MEM #2
-  #4 -> MEM #3
-  #5 -> MEM #4
-  #6 -> reg #2
-  #7 -> reg #1
-  #8 -> reg #0
-  #9 -> reg #0
-  #10 -> reg #0
-  #11 -> reg #0
-  #12 -> reg #0
-  #13 -> reg #1
-  #14 -> reg #0
-  #15 -> reg #1
-  #16 -> reg #0
-  #17 -> reg #1
-  #18 -> reg #0
-  #19 -> reg #1
-  #20 -> reg #0
-  #21 -> reg #1
-HW codegen:
-  0x00000431
-  0x00000fe1
-  0x000007e2
-  0x000017e1
-  0x00000fe2
-  0x00001fe1
-  0x000017e2
-  0x000027e1
-  0x00001fe2
-  0x00002fe1
-  0x000027e2
-  0x00000023
-  0x00000423
-  0x00003421
-  0x00000423
-  0x00000c03
-  0x00000c03
-  0x00000c03
-  0x00000c03
-  0x00000c03
-  0x00000000
+  0: jmp 0xc
+  1: (mmio) 0x0
+  2: (data) 0x0
+  3: (data) 0x0
+  4: (data) 0x0
+  5: (data) 0xfa000
+  6: (data) 0xfa001
+  7: (data) 0xfa002
+  8: (data) 0x9c4400
+  9: (data) 0x1f4000
+  a: (data) 0x1f4001
+  b: (data) 0x1f4002
+  c: ld r62, 0x5
+  d: st r62, 0x2
+  e: ld r62, 0x6
+  f: st r62, 0x3
+ 10: ld r62, 0x7
+ 11: st r62, 0x4
+ 12: add r2, 0x0, 0x0
+ 13: lt  r0, r2, 0x14
+ 14: equ r1, r0, 0x0
+ 15: jif r1, 0x19
+ 16: add r0, r2, 0x1
+ 17: add r2, r0, 0x0
+ 18: jmp 0x13
+ 19: equ r0, 0x1, 0x0
+ 1a: jif r0, 0x1c
+ 1b: jmp 0x19
+ 1c: ld r2, 0x8
+ 1d: ld r62, 0x2
+ 1e: ld r0, r62
+ 1f: ld r62, 0x3
+ 20: ld r0, r62
+ 21: ld r62, 0x4
+ 22: ld r0, r62
+ 23: ld r62, 0x2
+ 24: ld r63, 0x9
+ 25: add r0, r62, r63
+ 26: add r2, r0, 0x0
+ 27: ld r62, 0x3
+ 28: ld r63, 0xa
+ 29: add r1, r62, r63
+ 2a: add r0, r1, 0x0
+ 2b: ld r62, 0x4
+ 2c: ld r63, 0xb
+ 2d: add r1, r62, r63
+ 2e: add r0, r1, 0x0
+ 2f: halt 0x0

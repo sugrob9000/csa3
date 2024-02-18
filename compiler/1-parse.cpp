@@ -43,10 +43,8 @@ struct Lexer {
 
   // Must not be called without making sure there is something in the stream with peek().
   // This is expressed with the requirement to provide an expected character.
-  void consume_expect(char expected) {
-    int c = is.get();
-    (void) expected;
-    (void) c;
+  void consume_expect([[maybe_unused]] char expected) {
+    [[maybe_unused]] int c = is.get();
     assert(c != -1);
     assert(c == expected);
   }
@@ -133,10 +131,8 @@ struct Lexer {
     case ')':
       consume_expect(*peeked);
       return Close_token{};
-    case '"':
-      return consume_string_literal();
-    default:
-      return consume_multichar();
+    case '"': return consume_string_literal();
+    default: return consume_multichar();
     }
   }
 };
