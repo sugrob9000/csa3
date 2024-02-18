@@ -1,0 +1,61 @@
+name: "ci"
+run-name: "build"
+
+on: [push]
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: "Cache fmt"
+      uses: actions/cache@v4
+      id: cache-fmt
+      with:
+        path: fmt
+        key: fmt-9.1.0
+
+    - name: "Build fmt"
+      if: steps.cache-fmt.outputs.cache-hit != 'true'
+      uses: maximeverreault/setup-fmt@v1.0.2
+      with:
+        version: 9.1.0
+
+    - name: "Cache Clang"
+      uses: actions/cache@v4
+      id: cache-clang
+      with:
+        path: clang
+        key: ${{runner.os}}-clang
+
+    - name: "Download Clang"
+      if: steps.cache-clang.outputs.cache-hit != 'true'
+      uses: suisei-cn/actions-download-file@818d6b7dc8fe73f2f924b6241f2b1134ca1377d9
+      with:
+        url: "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
+        target: clang
+        auto-match: false
+
+    - name: "Unpack Clang"
+      working-directory: clang/
+      run: tar -xzvf clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+
+  build:
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+    - uses: lukka/get-cmake@latest
+
+    - name: "Configure"
+      run: >
+        cmake -B ${{github.workspace}}/build
+        -DCMAKE_BUILD_TYPE=Release
+
+    - name: "Build"
+      run: cmake --build ${{github.workspace}}/build

@@ -11,7 +11,6 @@ if(ENABLE_CLANG_TIDY)
 
   file(STRINGS "clang-tidy-checks" checks)
   list(JOIN checks "," checks)
-  message(STATUS "${checks}")
 
   set(CMAKE_CXX_CLANG_TIDY
     ${clang-tidy}
