@@ -1,5 +1,5 @@
 name: "ci"
-run-name: "build"
+run-name: "build & test"
 
 on: [push]
 

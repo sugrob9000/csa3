@@ -55,12 +55,10 @@ struct Coloring_result {
 
 Coloring_result color_variables
 (std::span<Lifetime> lives, uint32_t mem_base, int num_available_regs) {
-  namespace stdr = std::ranges;
-
   // Sort variables by ascending length of life, putting "hot" ones first
   std::vector<int> vars_by_life_length(lives.size());
-  stdr::iota(vars_by_life_length, 0);
-  stdr::sort(vars_by_life_length,
+  std::iota(vars_by_life_length.begin(), vars_by_life_length.end(), 0);
+  std::sort(vars_by_life_length.begin(), vars_by_life_length.end(),
     [&] (int a, int b) {
       return (lives[a].end - lives[a].start)
            < (lives[b].end - lives[b].start);
@@ -92,7 +90,7 @@ Coloring_result color_variables
         taken[their_reg->id] = true;
     }
 
-    auto it = stdr::find(taken, false);
+    auto it = std::find(taken.begin(), taken.end(), false);
     if (it != taken.end()) {
       result.locs[our_id] = Register(it - taken.begin());
     } else {
@@ -302,7 +300,7 @@ struct Codegen {
       handle_fetch_const(scratch_reg1, src_const());
       emit_memop(store, scratch_reg1, addr_of(dest));
       return;
-    default: std::unreachable();
+    default: unreachable();
     }
   }
 
@@ -351,7 +349,7 @@ struct Codegen {
       emit_memop(load, scratch_reg1, scratch_reg1);
       emit_memop(store, scratch_reg1, addr_of(dest));
       return;
-    default: std::unreachable();
+    default: unreachable();
     }
   }
 
@@ -398,7 +396,7 @@ struct Codegen {
       case Ir::Op::cmp_equ: return Hw_op::cmp_equ;
       case Ir::Op::cmp_gt: return Hw_op::cmp_gt;
       case Ir::Op::cmp_lt: return Hw_op::cmp_lt;
-      default: std::unreachable();
+      default: unreachable();
       }
     }();
 
