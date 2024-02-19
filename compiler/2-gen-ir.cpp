@@ -301,3 +301,19 @@ Ir Ir::compile(Ast& ast) {
     .num_variables = compiler.next_variable_id,
   };
 }
+
+bool Ir::Insn::has_valid_dest() const {
+  return op != Ir::Op::halt
+      && op != Ir::Op::jump
+      && op != Ir::Op::store;
+}
+
+bool Ir::Insn::has_valid_src1() const {
+  return op != Ir::Op::halt;
+}
+
+bool Ir::Insn::has_valid_src2() const {
+  return op != Ir::Op::halt
+      && op != Ir::Op::mov
+      && op != Ir::Op::load;
+}

@@ -5,24 +5,9 @@
 #include <fmt/format.h>
 #include <numeric>
 #include <span>
+#include <utility>
 
 namespace {
-
-bool has_dest(Ir::Op op) {
-  return op != Ir::Op::halt
-      && op != Ir::Op::jump
-      && op != Ir::Op::store;
-}
-
-bool has_src1(Ir::Op op) {
-  return op != Ir::Op::halt;
-}
-
-bool has_src2(Ir::Op op) {
-  return op != Ir::Op::halt
-      && op != Ir::Op::mov
-      && op != Ir::Op::load;
-}
 
 // Used as general-purpose tags (in sum types) throughout the codegen pass
 struct Register { uint8_t id; };
@@ -32,16 +17,7 @@ struct Address { uint32_t addr; };
 // ===========================================================================
 // Register coloring.
 
-// 2 registers are reserved for loads of spilled values and stores thereto.
-// An instruction might have had both its source operands spilled, so we need 2.
-
-// Give the compiler fewer registers to test spilling behavior
-constexpr bool use_fewer_registers = true;
-
-constexpr int num_available_regs = use_fewer_registers ? 3 : 62;
-
-constexpr Register scratch_reg1 = { 62 };
-constexpr Register scratch_reg2 = { 63 };
+constexpr int num_gp_registers = 62;
 
 // A variable is considered alive between its first and last usage, inclusive
 struct Lifetime {
@@ -53,39 +29,38 @@ auto build_var_lifetimes(int num_variables, std::span<Ir::Insn> code) {
 	std::vector<Lifetime> result(num_variables);
 
   for (int insn_id = 0; insn_id < code.size(); insn_id++) {
-    const auto maybe_update_lifetime = [&] (Ir::Value v) {
-      if (v.is<Ir::Variable>()) {
-				auto& life = result[v.as<Ir::Variable>().id];
+    const auto maybe_update_lifetime = [&] (Ir::Value value) {
+      if (auto var = value.maybe_as<Ir::Variable>()) {
+				auto& life = result[var->id];
 				life.start = std::min(life.start, insn_id);
 				life.end = std::max(life.end, insn_id);
       }
     };
     auto& insn = code[insn_id];
-    if (has_dest(insn.op)) maybe_update_lifetime(insn.dest);
-    if (has_src1(insn.op)) maybe_update_lifetime(insn.src1);
-    if (has_src2(insn.op)) maybe_update_lifetime(insn.src2);
+    if (insn.has_valid_dest()) maybe_update_lifetime(insn.dest);
+    if (insn.has_valid_src1()) maybe_update_lifetime(insn.src1);
+    if (insn.has_valid_src2()) maybe_update_lifetime(insn.src2);
   }
 
 	return result;
 }
 
 // The places a variable can be assigned to live in
-using Location = One_of<
-  Address, // Will need patching after coloring
-  Register
->;
+using Location = One_of<Address, Register>;
 
 struct Coloring_result {
   std::vector<Location> locs;
   int num_spilled_variables;
 };
 
-Coloring_result color_variables(std::span<Lifetime> lives) {
+Coloring_result color_variables
+(std::span<Lifetime> lives, uint32_t mem_base, int num_available_regs) {
+  namespace stdr = std::ranges;
+
   // Sort variables by ascending length of life, putting "hot" ones first
   std::vector<int> vars_by_life_length(lives.size());
-  for (int i = 0; i < lives.size(); i++)
-    vars_by_life_length[i] = i;
-  std::sort(vars_by_life_length.begin(), vars_by_life_length.end(),
+  stdr::iota(vars_by_life_length, 0);
+  stdr::sort(vars_by_life_length,
     [&] (int a, int b) {
       return (lives[a].end - lives[a].start)
            < (lives[b].end - lives[b].start);
@@ -98,12 +73,14 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
     .locs = std::vector<Location>(lives.size()),
     .num_spilled_variables = 0
   };
-  int32_t next_memory_addr = 0; // pseudo addresses; just base them on 0 for now
+  uint32_t next_memory_addr = mem_base;
 
   for (int i = 0; i < lives.size(); i++) {
     int our_id = vars_by_life_length[i];
     auto& our_life = lives[our_id];
-    bool taken[num_available_regs] = {};
+
+    bool taken_storage[num_gp_registers] = {};
+    std::span<bool> taken = { taken_storage, taken_storage + num_available_regs };
 
     for (int j = 0; j < i; j++) {
       int their_id = vars_by_life_length[j];
@@ -115,9 +92,9 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
         taken[their_reg->id] = true;
     }
 
-    auto free_reg = std::find(taken, taken + num_available_regs, false);
-    if (free_reg != std::end(taken)) {
-      result.locs[our_id] = Register(free_reg - taken);
+    auto it = stdr::find(taken, false);
+    if (it != taken.end()) {
+      result.locs[our_id] = Register(it - taken.begin());
     } else {
       result.locs[our_id] = Address(next_memory_addr++);
       result.num_spilled_variables++;
@@ -130,9 +107,8 @@ Coloring_result color_variables(std::span<Lifetime> lives) {
 
 // ===========================================================================
 // Memory-aware codegen.
-
-// Most of the same operations as the abstract `Ir::Op`, but
-// without mov (`add X, 0` suffices) and with loads and stores
+// The ISA has mostly the same operations as `Ir::Op`, but with differences
+// that codegen must reconcile.
 
 enum class Hw_op: uint8_t {
   halt = 0x0,
@@ -150,27 +126,29 @@ enum class Hw_op: uint8_t {
   jmp_if = 0xC,
 };
 
+// 2 registers are reserved for loads of spilled values and stores thereto.
+// An instruction might have had both its source operands spilled, so we need 2.
+constexpr Register scratch_reg1 = { 62 };
+constexpr Register scratch_reg2 = { 63 };
+
 struct Codegen {
   std::vector<uint32_t> static_data;
   std::vector<uint32_t> hw_code;
-  Coloring_result coloring;
+  std::vector<Location> var_locs;
 
   // =========================================================================
   // Dealing with variables
 
-  // Coloring gave us 0-based memory addresses for spilled variables,
-  // but we might have other data, so relocate them on top of our static data.
-  // This must be done BEFORE any codegen!
-  void pre_fixup_spilled_variables() {
-    size_t old_top = static_data.size();
-    for (auto& loc: coloring.locs) {
-      if (auto mem = loc.maybe_as<Address>())
-        mem->addr += old_top;
-    }
-    static_data.resize(old_top + coloring.num_spilled_variables);
+  // Admit a coloring produced by `color_variables()`.
+  // Must be called once BEFORE any codegen!
+  void use_coloring(Coloring_result&& coloring) {
+    var_locs = std::move(coloring.locs);
+    // Coloring gave us correct addresses for variable homes,
+    // but we still need to allocate space for them
+    static_data.resize(static_data.size() + coloring.num_spilled_variables);
   }
 
-  bool is_spilled(Ir::Variable var) { return coloring.locs[var.id].is<Address>(); }
+  bool is_spilled(Ir::Variable var) { return var_locs[var.id].is<Address>(); }
   static bool is_large_for_binop(Ir::Constant c) { return c.value >= (1u << 10); }
 
   Address spill_constant(Ir::Constant c) {
@@ -180,8 +158,8 @@ struct Codegen {
   }
 
   // Can only be called with external knowledge that this is valid
-  Register reg_of(Ir::Variable var) { return coloring.locs[var.id].as<Register>(); }
-  Address addr_of(Ir::Variable var) { return coloring.locs[var.id].as<Address>(); }
+  Register reg_of(Ir::Variable var) { return var_locs[var.id].as<Register>(); }
+  Address addr_of(Ir::Variable var) { return var_locs[var.id].as<Address>(); }
 
 
   // =========================================================================
@@ -293,7 +271,7 @@ struct Codegen {
     // --- Situation ---  ---- What do ----
     // 1.  reg <- reg     add R,0
     // 2.  reg <- mem     load
-    // 3.  reg <- const   fetch_const (add I,0 or load)
+    // 3.  reg <- const   fetch_const
     // 4.  mem <- reg     store
     // 5.  mem <- mem     load + store
     // 6.  mem <- const   fetch_const + store
@@ -324,7 +302,7 @@ struct Codegen {
       handle_fetch_const(scratch_reg1, src_const());
       emit_memop(store, scratch_reg1, addr_of(dest));
       return;
-    default: unreachable();
+    default: std::unreachable();
     }
   }
 
@@ -373,7 +351,7 @@ struct Codegen {
       emit_memop(load, scratch_reg1, scratch_reg1);
       emit_memop(store, scratch_reg1, addr_of(dest));
       return;
-    default: unreachable();
+    default: std::unreachable();
     }
   }
 
@@ -420,7 +398,7 @@ struct Codegen {
       case Ir::Op::cmp_equ: return Hw_op::cmp_equ;
       case Ir::Op::cmp_gt: return Hw_op::cmp_gt;
       case Ir::Op::cmp_lt: return Hw_op::cmp_lt;
-      default: unreachable();
+      default: std::unreachable();
       }
     }();
 
@@ -484,7 +462,6 @@ struct Codegen {
   }
 };
 
-
 } // anon namespace
 
 
@@ -494,13 +471,19 @@ Hw_image Hw_image::from_ir(Ir&& ir) {
   auto code = std::move(ir.code);
   codegen.static_data = std::move(ir.data);
 
-  { // Assign variables to locations
+  {
+    // This can be between 1 and `num_gp_registers`. There is no reason for it to
+    // be fewer than `num_gp_registers` other than to test spilling behavior
+    constexpr int registers_used = 3;
     auto lifetimes = build_var_lifetimes(ir.num_variables, code);
-    codegen.coloring = color_variables(lifetimes);
+    codegen.use_coloring(color_variables(
+      lifetimes,
+      codegen.static_data.size(),
+      registers_used
+    ));
   }
 
   // Perform code generation
-  codegen.pre_fixup_spilled_variables();
   for (Ir::Insn& insn: code)
     codegen.handle_ir_insn(insn);
   codegen.post_fixup_jumps();

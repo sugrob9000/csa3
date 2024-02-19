@@ -29,13 +29,13 @@ struct Ast {
 // ===========================================================================
 // Stage 2: abstract compilation into an IR
 //
-// Turning the above tree representation into a stream of "abstract" instructions.
+// Turning the above tree representation into a stream of IR instructions.
 // This instruction set has no concept of limited registers.
 // (Not SSA: we still have labels and plain jumps instead of basic blocks,
 //  and variables can be assigned to multiple times)
 //
 // The instructions closely match the final target instruction set,
-// but they operate in abstract values, for example:
+// but they operate on abstract values, for example:
 //
 //    [val5] <- [val1] + [val2]
 //
@@ -44,9 +44,9 @@ struct Ast {
 //    [r1] <- mem(32)
 //    [r3] <- [r0] + [r1]
 //
-// In this instruction set, loads and stores only happen when requested by code.
-// A later codegen pass will color the values onto registers and generate
-// appropriate spills, too.
+// In this instruction set, loads and stores only happen when requested by
+// code. A later codegen pass will color the values onto registers and generate
+// appropriate spills.
 
 struct Ir {
   struct Constant { int32_t value; };
@@ -68,6 +68,10 @@ struct Ir {
     Variable dest;
     Value src1;
     Value src2;
+
+    bool has_valid_dest() const;
+    bool has_valid_src1() const;
+    bool has_valid_src2() const;
   };
 
   std::vector<Insn> code;

@@ -32,14 +32,3 @@ struct One_of: std::variant<Args...> {
     return std::visit(Visitor{ std::forward<Fs>(fs)... }, *this);
   }
 };
-
-
-// Polyfill C++23 std::unreachable()
-
-[[noreturn]] inline void unreachable() {
-#if NDEBUG
-  __builtin_unreachable();
-#else
-  assert(false);
-#endif
-}
