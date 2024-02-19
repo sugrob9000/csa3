@@ -51,29 +51,23 @@ struct Lexer {
 
   std::optional<char> peek_after_whitespace() {
     bool inside_comment = false;
-    while (true) {
-      auto c = peek();
-      if (!c)
-        return std::nullopt;
-
+    while (auto c = peek()) {
       if (*c == ';')
         inside_comment = true;
       else if (*c == '\n')
         inside_comment = false;
-
       if (!std::isspace(*c) && !inside_comment)
         return c;
-
       consume_expect(*c);
     }
+    return std::nullopt;
   }
 
   // A multichar token is either an identifier or a number
   Token consume_multichar() {
     std::string word;
-    while (true) {
-      auto c = peek();
-      if (!c || !is_identifier_char(*c))
+    while (auto c = peek()) {
+      if (!is_identifier_char(*c))
         break;
       consume_expect(*c);
       word.push_back(*c);
@@ -107,17 +101,14 @@ struct Lexer {
     consume_expect('"');
 
     std::string literal;
-    while (true) {
-      auto c = peek();
-      if (!c)
-        error("EOF before closing string literal");
+    while (auto c = peek()) {
       consume_expect(*c);
       if (*c == '"')
-        break;
+        return String_token(std::move(literal));
       literal.push_back(*c);
     }
 
-    return String_token(std::move(literal));
+    error("EOF before closing string literal");
   }
 
   std::optional<Token> consume_token() {
@@ -147,11 +138,7 @@ Ast Ast::parse_stream(std::istream& is) {
   // node at the stack's top, so invalidation can't happen where we can't expect it
   std::vector<Parens*> stack;
 
-  while (true) {
-    auto token = lexer.consume_token();
-    if (!token)
-      break;
-
+  while (auto token = lexer.consume_token()) {
     if (stack.empty()) {
       // Root context is special: only parens can appear here
       token->match(
