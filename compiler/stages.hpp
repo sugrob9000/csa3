@@ -96,6 +96,5 @@ struct Hw_image {
   uint32_t data_break;
 
   static Hw_image from_ir(Ir&&);
-
   void disasm() const;
 };

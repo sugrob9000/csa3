@@ -5,8 +5,6 @@
 #include <span>
 #include <vector>
 
-#include <iostream>
-
 static std::vector<std::byte> get_whole_file(const char* filename) {
   std::ifstream f(filename, std::ios::binary | std::ios::ate);
   if (!f)
@@ -21,17 +19,18 @@ static std::vector<std::byte> get_whole_file(const char* filename) {
 }
 
 int main() {
-  constexpr const char* image_filename = "memory-image";
+  constexpr const char* image_filename = "image";
   auto image_bytes = get_whole_file(image_filename);
   assert(image_bytes.size() % sizeof(u32) == 0);
 
   LOG("Loaded image '{}'", image_filename);
 
-  Processor proc(std::span{
+  auto image_u32s = std::span{
     reinterpret_cast<const u32*>(image_bytes.data()),
     image_bytes.size() / sizeof(u32)
-  });
+  };
 
+  Simple_processor proc(image_u32s);
   while (proc.next_tick())
     ;
 }

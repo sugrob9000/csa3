@@ -208,6 +208,26 @@ struct Compiler {
   // =========================================================================
   // Compilation of high-level langauge constructs.
 
+  Ir::Constant emit_print_str(Ir::Value str) {
+    Ir::Variable counter = emit_load(new_var(), str);
+    Ir::Variable pointer = emit(Ir::Op::add, new_var(), str, Ir::Constant(1));
+
+    // This mishandles strings of length 0, but whatever
+    Label top = label_here();
+    Ir::Variable character = emit_load(new_var(), pointer);
+    emit_store(character, Ir::Constant(1));
+
+    Ir::Variable tmp = new_var();
+    emit(Ir::Op::add, tmp, pointer, Ir::Constant(1));
+    emit_mov(pointer, tmp);
+
+    emit(Ir::Op::sub, tmp, counter, Ir::Constant(1));
+    emit_mov(counter, tmp);
+    emit_jump_to(top, counter);
+
+    return Ir::Constant(0);
+  }
+
   Ir::Value compile_node(Ast::Node& node) {
     return node.match(
       [&] (Ast::Identifier& ident) -> Ir::Value {
@@ -264,7 +284,7 @@ struct Compiler {
     // Kind of intrinsics, but these do evaluate all their arguments
     if (func_name == "progn") {
       if (inputs.empty())
-        error("'{}' needs at least one argument", func_name);
+        error("progn needs at least one argument");
       return inputs.back();
     } else if (func_name == "read-mem") {
       if (inputs.size() != 1)
@@ -274,6 +294,10 @@ struct Compiler {
       if (inputs.size() != 2)
         error("Syntax: (write-mem ADDR VALUE)");
       return emit_store(inputs[1], inputs[0]);
+    } else if (func_name == "print-str") {
+      if (inputs.size() != 1)
+        error("print-str needs exactly one argument");
+      return emit_print_str(inputs[0]);
     }
 
     error("'{}' is not a known function", func_name);

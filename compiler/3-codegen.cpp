@@ -173,6 +173,9 @@ struct Codegen {
   // This is needed for correctly emitting backward jumps.
   std::vector<uint32_t> ir_to_hw_pos;
   std::vector<uint32_t> jumps_hw_pos; // The HW pos of all jumps
+  void remember_jump() {
+    jumps_hw_pos.push_back(hw_code.size());
+  }
 
   // Patch all jumps to point to the correct places in HW
   // This must be called AFTER any codegen!
@@ -239,12 +242,14 @@ struct Codegen {
   void emit_jmp(uint32_t dest) {
     if (dest >= (1u << 28))
       error("Absolute immediate address {:x} is too high for jmp", dest);
+    remember_jump();
     hw_code.push_back(static_cast<uint32_t>(Hw_op::jmp) | (dest << 4));
   }
 
   void emit_jmp_if(Register condition, uint32_t dest) {
     if (dest >= (1u << 22))
       error("Absolute immediate address {:x} is too high for jmp-if", dest);
+    remember_jump();
     hw_code.push_back(
       static_cast<uint32_t>(Hw_op::jmp_if) |
       (condition.id << 4) |
@@ -429,7 +434,6 @@ struct Codegen {
   }
 
   void handle_jump(Ir::Value condition, Address where) {
-    jumps_hw_pos.push_back(hw_code.size());
     condition.match(
       [&] (Ir::Constant c) {
         if (c.value != 0)
@@ -472,7 +476,7 @@ Hw_image Hw_image::from_ir(Ir&& ir) {
   {
     // This can be between 1 and `num_gp_registers`. There is no reason for it to
     // be fewer than `num_gp_registers` other than to test spilling behavior
-    constexpr int registers_used = 3;
+    constexpr int registers_used = num_gp_registers;
     auto lifetimes = build_var_lifetimes(ir.num_variables, code);
     codegen.use_coloring(color_variables(
       lifetimes,
@@ -537,7 +541,7 @@ struct Disassembler {
       case load:
       case store:
         return fmt::format(
-          "r{}, {}",
+          "r{}, mem[{}]",
           (insn >> 4) & 0x3F,
           Imm_or_reg(insn >> 10)
         );

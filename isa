@@ -5,12 +5,12 @@ opcode
 
 = = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 mem     [   6     ] [][                21                     ]
-         reg id     mode      0 reg | 1 imm    (absolute addr)
+         reg id     mode      1 reg | 0 imm    (absolute addr)
 LOAD, STORE
 
 = = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 binop   [   6     ] [][       10        ] [][       10        ]
-         dest id    m   0 reg | 1 imm     m    0 reg | 1 imm
+         dest id    m   1 reg | 0 imm     m    1 reg | 0 imm
 ADD, SUB, MUL, DIV, MOD, EQU, LT, GT
 
 = = = = - - - - - - - - - - - - - - - - - - - - - - - - - - - -

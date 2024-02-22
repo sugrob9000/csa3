@@ -5,13 +5,13 @@
 
 namespace {
 
+constexpr u32 mmio_addr = 1;
+
 void mmio_push(u32 c) {
-  assert(c < 128);
-  std::cout << char(c);
+  std::cout << char(c) << std::flush;
 }
 
 u32 mmio_get() {
-  LOG("Reading MMIO...");
   if (char c; std::cin >> c)
     return u32(c);
   else
@@ -166,3 +166,89 @@ bool Processor::next_tick() {
 
   return true;
 }
+
+
+// ===========================================================================
+// Simple processor model, for testing program logic
+
+Simple_processor::Simple_processor(std::span<const u32> image) {
+  memory.assign(image.begin(), image.end());
+}
+
+// NOLINTBEGIN cognitive complexity: this will be thrown away anyway
+bool Simple_processor::next_tick() {
+  const u32 insn = memory[pc++];
+  const auto opcode = static_cast<Opcode>(insn & 0xF);
+
+  switch (opcode) {
+  case Opcode::halt:
+    return false;
+
+  case Opcode::load:
+  case Opcode::store: {
+    const u8 reg_id = (insn >> 4) & 0x3F;
+    u32 addr;
+    if (insn & (1u << 10))
+      addr = registers[(insn >> 11) & 0x3F];
+    else
+      addr = insn >> 11;
+    if (opcode == Opcode::load) {
+      if (addr == mmio_addr)
+        registers[reg_id] = mmio_get();
+      else if (addr < memory.size())
+        registers[reg_id] = memory[addr];
+      else
+        registers[reg_id] = 0xBADF00D;
+    } else {
+      if (addr == mmio_addr)
+        mmio_push(registers[reg_id]);
+      else if (addr < memory.size())
+        memory[addr] = registers[reg_id];
+    }
+    return true;
+  }
+
+  case Opcode::jmp:
+    pc = insn >> 4;
+    return true;
+
+  case Opcode::jmp_if: {
+    const u8 reg_id = (insn >> 4) & 0x3F;
+    const u32 value = registers[reg_id];
+    if (value)
+      pc = insn >> 10;
+    return true;
+  }
+
+  default: {
+    // binop
+    u32& dest = registers[(insn >> 4) & 0x3F];
+    u32 src1, src2;
+
+    if (insn & (1u << 10))
+      src1 = registers[(insn >> 11) & 0x3F];
+    else
+      src1 = (insn >> 11) & 0x3FF;
+
+    if (insn & (1u << 21))
+      src2 = registers[(insn >> 22) & 0x3F];
+    else
+      src2 = (insn >> 22) & 0x3FF;
+
+    switch (opcode) {
+    case Opcode::add: dest = src1 + src2; break;
+    case Opcode::sub: dest = src1 - src2; break;
+    case Opcode::mul: dest = src1 * src2; break;
+    case Opcode::div: dest = src1 / src2; break;
+    case Opcode::mod: dest = src1 % src2; break;
+    case Opcode::cmp_equ: dest = (src1 == src2) ? 1 : 0; break;
+    case Opcode::cmp_gt: dest = (src1 > src2) ? 1 : 0; break;
+    case Opcode::cmp_lt: dest = (src1 < src2) ? 1 : 0; break;
+    default: FATAL("Bad opcode in insn 0x{:x} at pc 0x{:x}", insn, pc-1);
+    }
+
+    return true;
+  }
+  }
+}
+// NOLINTEND

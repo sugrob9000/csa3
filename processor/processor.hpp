@@ -14,8 +14,6 @@ struct Processor {
   // =========================================================================
   // Processor state...
 
-  constexpr static u32 mmio_addr = 1;
-
   struct Mem {
     std::vector<u32> memory;
     u32 addr;
@@ -89,4 +87,16 @@ struct Processor {
   };
   Control_signals next_ctrl = {};
   Control_signals ctrl = {};
+};
+
+
+// Simpler "magic" processor with same interface, for testing program logic
+
+struct Simple_processor {
+  explicit Simple_processor(std::span<const u32> image);
+  bool next_tick();
+
+  std::vector<u32> memory;
+  u32 registers[64] = {};
+  u32 pc = 0;
 };

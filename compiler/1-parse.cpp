@@ -144,6 +144,7 @@ Ast Ast::parse_stream(std::istream& is) {
       // Root context is special: only parens can appear here
       token->match(
         [&] (Lexer::Opening_paren) { stack.push_back(&tree.sexprs.emplace_back()); },
+        [&] (Lexer::Closing_paren) { error("Unbalanced parens: too many closing"); },
         [&] (auto&&) { error("At root scope, only opening parens is allowed"); }
       );
       continue;
@@ -166,6 +167,9 @@ Ast Ast::parse_stream(std::istream& is) {
       [&] (Lexer::String& str) { context.emplace_back(String{std::move(str.value)}); }
     );
   }
+
+  if (!stack.empty())
+    error("Unbalanced parens: too many opening");
 
   return tree;
 }
