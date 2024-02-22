@@ -54,7 +54,7 @@ struct Coloring_result {
 };
 
 Coloring_result color_variables
-(std::span<Lifetime> lives, uint32_t mem_base, int num_available_regs) {
+(std::span<Lifetime> lives, uint32_t mem_base, int num_avail_regs) {
   // Sort variables by ascending length of life, putting "hot" ones first
   std::vector<int> vars_by_life_length(lives.size());
   std::iota(vars_by_life_length.begin(), vars_by_life_length.end(), 0);
@@ -78,7 +78,7 @@ Coloring_result color_variables
     auto& our_life = lives[our_id];
 
     bool taken_storage[num_gp_registers] = {};
-    std::span<bool> taken = { taken_storage, taken_storage + num_available_regs };
+    auto taken = std::span{ taken_storage, taken_storage + num_avail_regs };
 
     for (int j = 0; j < i; j++) {
       int their_id = vars_by_life_length[j];

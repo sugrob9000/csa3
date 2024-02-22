@@ -1,14 +1,17 @@
 #include "processor.hpp"
 #include "util.hpp"
+#include <cassert>
 #include <fstream>
+#include <span>
 #include <vector>
 
+#include <iostream>
+
 static std::vector<std::byte> get_whole_file(const char* filename) {
-  std::ifstream f(filename, std::ios::binary);
+  std::ifstream f(filename, std::ios::binary | std::ios::ate);
   if (!f)
     FATAL("Failed to load f '{}'", filename);
 
-  f.seekg(0, f.end);
   const auto size = f.tellg();
   f.seekg(0, f.beg);
 
@@ -18,16 +21,17 @@ static std::vector<std::byte> get_whole_file(const char* filename) {
 }
 
 int main() {
-  Processor processor;
-
   constexpr const char* image_filename = "memory-image";
-  processor.copy_image(get_whole_file(image_filename));
+  auto image_bytes = get_whole_file(image_filename);
+  assert(image_bytes.size() % sizeof(u32) == 0);
+
   LOG("Loaded image '{}'", image_filename);
 
-  LOG("Starting execution.");
-  for (int i = 0; i < 100; i++) {
-    auto result = processor.advance_tick();
-    if (result == Processor::Tick_result::stop)
-      break;
-  }
+  Processor proc(std::span{
+    reinterpret_cast<const u32*>(image_bytes.data()),
+    image_bytes.size() / sizeof(u32)
+  });
+
+  while (proc.next_tick())
+    ;
 }

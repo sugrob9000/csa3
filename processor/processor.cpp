@@ -1,172 +1,168 @@
 #include "processor.hpp"
 #include "util.hpp"
 #include <cassert>
-#include <cstddef>
-#include <exception>
-#include <sys/mman.h>
+#include <iostream>
 
-Memory_manager::Memory_manager() {
-  constexpr auto map_prot = PROT_READ | PROT_WRITE;
-  constexpr auto map_flags = MAP_SHARED | MAP_ANONYMOUS;
+namespace {
 
-  const auto map_result = ::mmap(nullptr, memory_size_bytes, map_prot, map_flags, -1, 0);
-  if (map_result == MAP_FAILED)
-    FATAL("memory: failed to map {} bytes", memory_size_bytes);
-
-  LOG("memory: emulated range 0x{:08x}...0x{:08x} is host range {}...{}",
-      0, memory_size_bytes,
-      map_result,
-      static_cast<void*>(static_cast<std::byte*>(map_result) + memory_size_bytes));
-
-  const auto data_begin = reinterpret_cast<std::byte*>(map_result);
-  const auto data_end = data_begin + memory_size_bytes;
-
-  this->memory = {
-    reinterpret_cast<uint32_t*>(data_begin),
-    reinterpret_cast<uint32_t*>(data_end),
-  };
+void mmio_push(u32 c) {
+  assert(c < 128);
+  std::cout << char(c);
 }
 
-Memory_manager::~Memory_manager() {
-  ::munmap(memory.data(), memory_size_bytes);
+u32 mmio_get() {
+  LOG("Reading MMIO...");
+  if (char c; std::cin >> c)
+    return u32(c);
+  else
+    return 0;
 }
 
-void Memory_manager::latch() {
-  switch (action) {
-  case Action::read:
-    value = memory[address];
+enum class Opcode {
+  halt = 0x0,
+  load = 0x1,
+  store = 0x2,
+  add = 0x3,
+  sub = 0x4,
+  mul = 0x5,
+  div = 0x6,
+  mod = 0x7,
+  cmp_equ = 0x8,
+  cmp_gt = 0x9,
+  cmp_lt = 0xA,
+  jmp = 0xB,
+  jmp_if = 0xC,
+};
+
+Processor::Control_signals decode_insn(u32 insn) {
+  Processor::Control_signals result{};
+
+  u8 opcode = insn & 0xF;
+
+  switch (static_cast<Opcode>(opcode)) {
+  case Opcode::halt:
+    result.halt = true;
     break;
-  case Action::write:
-    memory[address] = value;
+  case Opcode::jmp:
+  case Opcode::jmp_if:
+    FATAL("I don't like jumps");
     break;
-  case Action::none:
+  default:
+    LOG("This is 0x{:x}", insn);
     break;
   }
-  latches_this_tick++;
+
+  return result;
 }
 
+} // anon namespace
 
-void Executor::set_flag(int id, bool value) {
-  if (id != 0)
-    flags[id] = value;
+Processor::Processor(std::span<const u32> image) {
+  // Load memory image.
+  // Doing it this way means that memory outside the image is not
+  // really memory: it will ignore stores and loads will return a
+  // constant value. But programs should never access that anyway
+  // (hardware will, though)
+  mem.memory.assign(image.begin(), image.end());
+
+  { // Iniitalize processor state so it begins execution
+    fetch.addr = -1;
+
+    // Prime the pipeline with NOPs
+    fetch.fetched_insn = 0x3; // add r0, r0, r0
+  }
 }
 
-void Executor::set_register(int id, uint32_t value) {
-  if (id != 0)
-    registers[id] = value;
-}
+bool Processor::next_tick() {
+  // What happens in this function is thought of as simultaneous, so
+  // we need to carefully order the propagations to simulate the way
+  // it "would have happened" in a real circuit
 
+  // Last tick's decoded signals become this tick's control signals
+  ctrl = next_ctrl;
 
-Processor::Processor() {
-  instruction_fetch.out_instruction = Instruction::encoded_nop();
-  LOG("primed fetch output with {:08x}", instruction_fetch.out_instruction);
-
-  decoder.out_decoded = Instruction::nop();
-  LOG("primed decoder output with {}", decoder.out_decoded);
-
-  // Due to pipelining, it will take two ticks before real instructions from the
-  // image begin to execute, so pull the instruction pointer behind by two words
-  executor.instruction_pointer = -8;
-}
-
-void Processor::copy_image(std::span<const std::byte> image) {
-  auto image_size = image.size();
-  const auto memory_size = sizeof(uint32_t) * memory_manager.memory.size();
-
-  if (image_size > memory_size) {
-    LOG("warning: image too large ({} > {}), truncating", image_size, memory_size);
-    image_size = memory_size;
+  if (ctrl.halt) {
+    LOG("Halting");
+    return false;
   }
 
-  std::memcpy(memory_manager.memory.data(), image.data(), image_size);
-}
+  { // A memory operation happens, if any
+    assert(!ctrl.mem_write || !ctrl.mem_read);
 
-auto Processor::advance_tick() -> Tick_result {
-  bool should_log_regs = false;
-  bool should_log_flags = false;
-
-  { // Propagate state results down the pipeline
-    decoder.in_encoded = instruction_fetch.out_instruction;
-    executor.in_instruction = decoder.out_decoded;
-  }
-
-  { // Advance the state of each part of the pipeline
-    memory_manager.latches_this_tick = 0;
-
-    { // Instruction fetching
-      memory_manager.action = Memory_manager::Action::read;
-      memory_manager.address = instruction_fetch.fetch_head;
-      memory_manager.latch();
-      instruction_fetch.out_instruction = memory_manager.value;
-      instruction_fetch.fetch_head++;
+    if (ctrl.mem_write) {
+      LOG("write {} <- 0x{:x}", mem.addr, mem.wdata);
+      if (mem.addr == mmio_addr)
+        mmio_push(mem.wdata);
+      else if (mem.addr < mem.memory.size())
+        mem.memory[mem.addr] = mem.wdata;
     }
 
-    // Decoding
-    decoder.out_decoded = decode(decoder.in_encoded);
-
-    { // Execution
-      executor.instruction_pointer += 4;
-      auto& insn = executor.in_instruction;
-
-      const auto get_src_value = [this] (Value_src src) {
-        return src.type == Value_src::Type::imm
-          ? src.id_or_value
-          : executor.registers[src.id_or_value];
-      };
-
-      switch (insn.op) {
-      case Operation_id::halt:
-        halt_rq = true;
-        break;
-      case Operation_id::add: {
-        const uint64_t a = get_src_value(insn.arith.src1);
-        const uint64_t b = get_src_value(insn.arith.src2);
-        const uint64_t result = a + b;
-        const bool carry = !!(result >> 32);
-        const uint32_t result_trunc = result;
-        executor.set_register(insn.arith.dst1.id, result_trunc);
-        executor.set_flag(insn.arith.dst_flag_id, carry);
-        should_log_flags = true;
-        should_log_regs = true;
-        break;
-      }
-      default:
-        break;
-      }
+    if (ctrl.mem_read) {
+      if (mem.addr == mmio_addr)
+        mem.rdata = mmio_get();
+      else if (mem.addr < mem.memory.size())
+        mem.rdata = mem.memory[mem.addr];
+      else
+        mem.rdata = 0xBADF00D;
+      LOG("read {} -> 0x{:x}", mem.addr, mem.rdata);
     }
   }
 
-  { // Logging
-    constexpr std::string_view indent = "    ";
-    LOG("(FETCH @ 0x{:08x} | 0x{:08x}) -> (DECODE 0x{:08x} | {}) -> (EXEC {} @ {}), {} mem",
-        instruction_fetch.fetch_head, instruction_fetch.out_instruction,
-        decoder.in_encoded, decoder.out_decoded,
-        executor.in_instruction, executor.instruction_pointer,
-        memory_manager.latches_this_tick);
+  { // Decoder decodes last tick's insn, creating next tick's control signals
+    decoder_in = fetch.fetched_insn;
+    next_ctrl = decode_insn(decoder_in);
+  }
 
-    if (should_log_regs) {
-      LOG_NOLN("{}", indent);
-      for (int i = 0; i < 16; i++) {
-        if (i == 8)
-          LOG_NOLN("{}", indent);
-        LOG_NOLN("r{} = 0x{:08x} ", i, executor.registers[i]);
-        if (i % 8 == 7)
-          LOG("");
+  { // Instruction fetch proceeds
+    fetch.fetched_insn = mem.rdata;
+    fetch.next_head_from_inc = fetch.addr + 1;
+    fetch.next_head_from_imm = ctrl.imm1;
+
+    switch (ctrl.fetch_next_head_mux) {
+      case Fetch::Next_head_mux::from_inc: fetch.addr = fetch.next_head_from_inc; break;
+      case Fetch::Next_head_mux::from_imm: fetch.addr = fetch.next_head_from_imm; break;
+    }
+
+    // unless (TODO) stalled, tell memory to read the next insn
+    if (true) {
+      next_ctrl.mem_read = true;
+      next_ctrl.sel_mem_addr = Mem::Addr_mux::from_fetch;
+    }
+  }
+
+  { // Regfile operations
+    assert(ctrl.sel_src1_regid < 64);
+    assert(ctrl.sel_src2_regid < 64);
+    assert(ctrl.sel_dest_regid < 64);
+
+    reg.dest_mux_from_mem = mem.rdata;
+    reg.dest_mux_from_alu = alu.result;
+
+    reg.src1 = reg.registers[ctrl.sel_src1_regid];
+    reg.src2 = reg.registers[ctrl.sel_src2_regid];
+
+    if (ctrl.dest_reg_write) {
+      u32& dest = reg.registers[ctrl.sel_dest_regid];
+      switch (ctrl.sel_reg_dest) {
+        case Reg::Dest_mux::from_mem: dest = reg.dest_mux_from_mem; break;
+        case Reg::Dest_mux::from_alu: dest = reg.dest_mux_from_alu; break;
       }
     }
+  }
 
-    if (should_log_flags) {
-      LOG_NOLN("{}f = ", indent);
-      for (int i = 0; i < 8; i++)
-        LOG_NOLN("{}", executor.flags[i] ? char('0' + i) : '-');
-      LOG("");
+  { // Feed values into memory manager
+    mem.addr_mux_from_fetch = fetch.addr;
+    mem.addr_mux_from_imm1 = ctrl.imm1;
+    mem.addr_mux_from_src1 = reg.src1;
+
+    switch (ctrl.sel_mem_addr) {
+      case Mem::Addr_mux::from_fetch: mem.addr = mem.addr_mux_from_fetch; break;
+      case Mem::Addr_mux::from_imm1: mem.addr = mem.addr_mux_from_imm1; break;
+      case Mem::Addr_mux::from_src1: mem.addr = mem.addr_mux_from_src1; break;
     }
+
+    mem.wdata = reg.dest;
   }
 
-  if (halt_rq) {
-    LOG("Halting.");
-    return Tick_result::stop;
-  } else {
-    return Tick_result::keep_going;
-  }
+  return true;
 }

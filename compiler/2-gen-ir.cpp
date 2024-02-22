@@ -289,7 +289,7 @@ Ir Ir::compile(Ast& ast) {
   // - Reserve a word at 0x1 for MMIO
   compiler.static_data.resize(2);
 
-  for (auto& expr: ast.toplevel_exprs)
+  for (auto& expr: ast.sexprs)
     compiler.compile_parens(expr);
 
   // Add a final halt

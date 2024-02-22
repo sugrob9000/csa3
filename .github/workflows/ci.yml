@@ -7,7 +7,7 @@ env:
   GH_TOKEN: ${{github.token}}
 
 jobs:
-  build:
+  build-test:
     runs-on: ubuntu-latest
     container: ubuntu:23.10
     steps:

@@ -20,7 +20,7 @@ struct Ast {
   struct Parens { std::vector<Node> children; };
   struct Node: One_of<Identifier, Number, String, Parens> {};
 
-  std::vector<Parens> toplevel_exprs;
+  std::vector<Parens> sexprs;
 
   static Ast parse_stream(std::istream&);
 };

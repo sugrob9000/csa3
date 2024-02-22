@@ -9,30 +9,30 @@
 
 namespace {
 
-struct Open_token {};
-struct Close_token {};
-struct Identifier_token { std::string name; };
-struct Number_token { int32_t value; };
-struct String_token { std::string value; };
-
-using Token = One_of<
-  Open_token,
-  Close_token,
-  Identifier_token,
-  Number_token,
-  String_token
->;
-
-bool is_identifier_char(char c) {
-  if (c == '(' || c == ')' || c == ';' || c == '"')
-    return false;
-  // Other than the special characters, Lisps are a lot laxer about what
-  // can be in an identifier. '-', '+', and many others are allowed.
-  return std::isprint(c) && !std::isspace(c);
-}
-
 struct Lexer {
   std::istream& is;
+
+  struct Opening_paren {};
+  struct Closing_paren {};
+  struct Identifier { std::string name; };
+  struct Number { int32_t value; };
+  struct String { std::string value; };
+
+  using Token = One_of<
+    Opening_paren,
+    Closing_paren,
+    Identifier,
+    Number,
+    String
+  >;
+
+  static bool is_identifier_char(char c) {
+    if (c == '(' || c == ')' || c == ';' || c == '"')
+      return false;
+    // Other than the special characters, Lisps are a lot laxer about what
+    // can be in an identifier. '-', '+', and many others are allowed.
+    return std::isprint(c) && !std::isspace(c);
+  }
 
   std::optional<char> peek() {
     int c = is.peek();
@@ -89,10 +89,10 @@ struct Lexer {
             word, std::make_error_code(ec).message());
       }
 
-      return Number_token(number);
+      return Number(number);
     } else {
       // This is just a identifier (function or binding name, etc.)
-      return Identifier_token(std::move(word));
+      return Identifier(std::move(word));
     }
   }
 
@@ -104,7 +104,7 @@ struct Lexer {
     while (auto c = peek()) {
       consume_expect(*c);
       if (*c == '"')
-        return String_token(std::move(literal));
+        return String(std::move(literal));
       literal.push_back(*c);
     }
 
@@ -118,10 +118,10 @@ struct Lexer {
     switch (*peeked) {
     case '(':
       consume_expect(*peeked);
-      return Open_token{};
+      return Opening_paren{};
     case ')':
       consume_expect(*peeked);
-      return Close_token{};
+      return Closing_paren{};
     case '"': return consume_string_literal();
     default: return consume_multichar();
     }
@@ -131,18 +131,19 @@ struct Lexer {
 } // anon namespace
 
 Ast Ast::parse_stream(std::istream& is) {
-  Ast tree;
   Lexer lexer(is);
 
   // `Parens::children` can cause relocation of children, but we only modify the
   // node at the stack's top, so invalidation can't happen where we can't expect it
   std::vector<Parens*> stack;
 
+  Ast tree;
+
   while (auto token = lexer.consume_token()) {
     if (stack.empty()) {
       // Root context is special: only parens can appear here
       token->match(
-        [&] (Open_token) { stack.push_back(&tree.toplevel_exprs.emplace_back()); },
+        [&] (Lexer::Opening_paren) { stack.push_back(&tree.sexprs.emplace_back()); },
         [&] (auto&&) { error("At root scope, only opening parens is allowed"); }
       );
       continue;
@@ -151,25 +152,18 @@ Ast Ast::parse_stream(std::istream& is) {
     // General case
     auto& context = stack.back()->children;
     token->match(
-      [&] (Open_token) {
-        context.emplace_back(Parens{});
-        auto new_top = &context.back().as<Parens>();
+      [&] (Lexer::Opening_paren) {
+        auto new_top = &context.emplace_back(Parens{}).as<Parens>();
         stack.push_back(new_top);
       },
-      [&] (Close_token) {
+      [&] (Lexer::Closing_paren) {
         if (context.empty())
           error("Empty parens make no sense");
         stack.pop_back();
       },
-      [&] (Identifier_token& id) {
-        context.emplace_back(Identifier{std::move(id.name)});
-      },
-      [&] (Number_token& num) {
-        context.emplace_back(Number{num.value});
-      },
-      [&] (String_token& str) {
-        context.emplace_back(String{std::move(str.value)});
-      }
+      [&] (Lexer::Identifier& id) { context.emplace_back(Identifier{std::move(id.name)}); },
+      [&] (Lexer::Number& num) { context.emplace_back(Number{num.value}); },
+      [&] (Lexer::String& str) { context.emplace_back(String{std::move(str.value)}); }
     );
   }
 
