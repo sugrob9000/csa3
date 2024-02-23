@@ -93,14 +93,13 @@ struct Processor {
   Control_signals ctrl = {};
 
   static Control_signals decode_insn(u32);
+
+  void get_ctrl_signals();
   void mem_perform();
   void reg_readout();
-
   void decoder_perform();
-
   void fetch_perform();
   void alu_perform();
-
   void reg_writeback();
   void mem_update_inputs();
 };

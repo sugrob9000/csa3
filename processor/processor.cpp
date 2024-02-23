@@ -104,23 +104,7 @@ bool Processor::next_tick() {
   // we need to carefully order the propagations to simulate the way
   // it "would have happened" in a real circuit
 
-  // Latest decoded signals become current control signals (control register latches)
-  ctrl = next_ctrl;
-
-  if (ctrl.stall > 0) {
-    // If control unit is stalled, disable signals that would cause visible effects
-    ctrl.mem_write = false;
-    ctrl.dest_reg_write = false;
-    ctrl.halt = false;
-  }
-
-  { // Verify state
-    assert(ctrl.sel_src1_regid < 64);
-    assert(ctrl.sel_src2_regid < 64);
-    assert(ctrl.sel_dest_regid < 64);
-    assert(!ctrl.mem_write || !ctrl.mem_read);
-  }
-
+  get_ctrl_signals();
   print_state();
 
   if (ctrl.halt) {
@@ -140,6 +124,25 @@ bool Processor::next_tick() {
   mem_update_inputs();
 
   return true;
+}
+
+void Processor::get_ctrl_signals() {
+  // Latest decoded signals become current control signals (control register latches)
+  ctrl = next_ctrl;
+
+  if (ctrl.stall > 0) {
+    // If control unit is stalled, disable signals that would cause visible effects
+    ctrl.mem_write = false;
+    ctrl.dest_reg_write = false;
+    ctrl.halt = false;
+  }
+
+  { // Verify state
+    assert(ctrl.sel_src1_regid < 64);
+    assert(ctrl.sel_src2_regid < 64);
+    assert(ctrl.sel_dest_regid < 64);
+    assert(!ctrl.mem_write || !ctrl.mem_read);
+  }
 }
 
 void Processor::mem_perform() {

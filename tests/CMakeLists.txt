@@ -1,7 +1,7 @@
 function(create_golden_test binary name)
 	add_test(
 		NAME ${name}-run
-		COMMAND sh -c "${CMAKE_BINARY_DIR}/${binary} < ${CMAKE_CURRENT_SOURCE_DIR}/${name}-in > ${name}-out")
+		COMMAND sh -c "${CMAKE_BINARY_DIR}/${binary} ${CMAKE_CURRENT_SOURCE_DIR}/${name}-in ${name}-out")
 
 	add_test(
 		NAME ${name}-compare
@@ -18,3 +18,6 @@ function(create_golden_test binary name)
 endfunction()
 
 create_golden_test(compiler "compiler-1")
+create_golden_test(compiler "compiler-2")
+create_golden_test(compiler "compiler-3")
+create_golden_test(compiler "compiler-4")
