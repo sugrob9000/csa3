@@ -10,6 +10,7 @@ using u32 = uint32_t;
 struct Processor {
   explicit Processor(std::span<const u32> image);
   bool next_tick(); // returns: whether halted
+  void print_state() const;
 
   // =========================================================================
   // Processor state...
@@ -40,21 +41,22 @@ struct Processor {
   struct Alu {
     enum class Op: u8 { add, sub, mul, div, mod, equ, lt, gt };
 
-    enum class Operand_mux: u8 { from_src_reg, from_imm };
+    enum class Src_mux: u8 { from_src_reg, from_imm };
     u32 op1_from_src1;
     u32 op1_from_imm1;
     u32 op2_from_src2;
     u32 op2_from_imm2;
 
-    u32 operand1;
-    u32 operand2;
+    u32 src1;
+    u32 src2;
     u32 result;
   } alu = {};
 
   struct Fetch {
-    enum class Next_head_mux: u8 { from_inc, from_imm };
+    enum class Head_mux: u8 { from_inc, from_jmp, from_same };
+
     u32 next_head_from_inc;
-    u32 next_head_from_imm;
+    u32 next_head_from_jmp;
 
     u32 fetched_insn;
     u32 addr;
@@ -64,7 +66,8 @@ struct Processor {
 
   // Decoder output
   struct Control_signals {
-    bool halt;
+    bool halt; // Not really a wire in the processor, but we use it to stop simulation
+    u8 stall;
 
     bool mem_write;
     bool mem_read;
@@ -77,25 +80,38 @@ struct Processor {
     u8 sel_src2_regid;
 
     Alu::Op sel_alu_op;
-    Alu::Operand_mux sel_alu_operand1;
-    Alu::Operand_mux sel_alu_operand2;
+    Alu::Src_mux sel_alu_src1;
+    Alu::Src_mux sel_alu_src2;
 
-    Fetch::Next_head_mux fetch_next_head_mux;
+    Fetch::Head_mux sel_fetch_head;
+    bool doing_jif;
 
     u32 imm1;
     u32 imm2;
   };
   Control_signals next_ctrl = {};
   Control_signals ctrl = {};
+
+  static Control_signals decode_insn(u32);
+  void mem_perform();
+  void reg_readout();
+
+  void decoder_perform();
+
+  void fetch_perform();
+  void alu_perform();
+
+  void reg_writeback();
+  void mem_update_inputs();
 };
 
 
+// ===========================================================================
 // Simpler "magic" processor with same interface, for testing program logic
 
 struct Simple_processor {
   explicit Simple_processor(std::span<const u32> image);
   bool next_tick();
-
   std::vector<u32> memory;
   u32 registers[64] = {};
   u32 pc = 0;

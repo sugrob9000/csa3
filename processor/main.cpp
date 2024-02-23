@@ -18,8 +18,11 @@ static std::vector<std::byte> get_whole_file(const char* filename) {
   return image_mem;
 }
 
-int main() {
-  constexpr const char* image_filename = "image";
+int main(int argc, char** argv) {
+  if (argc != 2)
+    FATAL("Usage: {} <image>", argv[0]);
+
+  const char* image_filename = argv[1];
   auto image_bytes = get_whole_file(image_filename);
   assert(image_bytes.size() % sizeof(u32) == 0);
 
@@ -30,7 +33,8 @@ int main() {
     image_bytes.size() / sizeof(u32)
   };
 
-  Simple_processor proc(image_u32s);
+  Processor proc(image_u32s);
+
   while (proc.next_tick())
     ;
 }
