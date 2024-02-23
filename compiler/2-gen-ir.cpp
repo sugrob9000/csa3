@@ -71,13 +71,13 @@ struct Compiler {
     return Label(emitted_code.size());
   }
 
-  void emit_jump_to(Label label, Ir::Value condition = Ir::Constant(true)) {
+  void emit_jump_to(Label label, Ir::Value condition = Ir::Constant(1)) {
     emit(Ir::Op::jump, {}, condition, Ir::Constant(label));
   }
 
   using Jump_id = size_t;
 
-  Jump_id emit_unpatched_jump(Ir::Value condition = Ir::Constant(true)) {
+  Jump_id emit_unpatched_jump(Ir::Value condition = Ir::Constant(1)) {
     size_t result = emitted_code.size();
     emit(Ir::Op::jump, {}, condition, Ir::Constant(unpatched_jump_magic));
     return result;
@@ -205,14 +205,13 @@ struct Compiler {
     return emit(*op, new_var(), inputs[0], inputs[1]);
   }
 
-  // =========================================================================
-  // Compilation of high-level langauge constructs.
-
   Ir::Constant emit_print_str(Ir::Value str) {
     Ir::Variable counter = emit_load(new_var(), str);
     Ir::Variable pointer = emit(Ir::Op::add, new_var(), str, Ir::Constant(1));
 
-    // This mishandles strings of length 0, but whatever
+    Ir::Variable is_zero = emit(Ir::Op::cmp_equ, new_var(), counter, Ir::Constant(0));
+    Jump_id skip_loop_jump = emit_unpatched_jump(is_zero);
+
     Label top = label_here();
     Ir::Variable character = emit_load(new_var(), pointer);
     emit_store(character, Ir::Constant(1));
@@ -225,8 +224,13 @@ struct Compiler {
     emit_mov(counter, tmp);
     emit_jump_to(top, counter);
 
+    patch_jump_to_here(skip_loop_jump);
     return Ir::Constant(0);
   }
+
+
+  // =========================================================================
+  // Compilation of high-level langauge constructs.
 
   Ir::Value compile_node(Ast::Node& node) {
     return node.match(

@@ -45,6 +45,7 @@ endfunction()
 
 create_executable(compiler ./compiler)
 create_executable(processor ./processor)
+create_executable(disasm ./disasm)
 
 include(CTest)
 if(BUILD_TESTING)

@@ -1,16 +1,23 @@
 #include "diagnostics.hpp"
 #include "stages.hpp"
 #include <fstream>
-#include <iostream>
 
-int main() {
-  auto ast = Ast::parse_stream(std::cin);
+int main(int argc, char** argv) {
+  if (argc != 3)
+    error("Usage: {} <victim.lisp> <output-image>", argv[0]);
+
+  const char* in_filename = argv[1];
+  std::ifstream input(in_filename);
+  if (!input)
+    error("Cannot open victim '{}'", in_filename);
+
+  auto ast = Ast::parse_stream(input);
+  input.close();
+
   auto ir = Ir::compile(ast);
   auto image = Hw_image::from_ir(std::move(ir));
 
-  image.disasm();
-
-  constexpr const char* out_filename = "image";
+  const char* out_filename = argv[2];
   std::ofstream out_stream(out_filename, std::ios::binary);
   if (!out_stream)
     error("Cannot open output file '{}'", out_filename);

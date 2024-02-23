@@ -1,8 +1,6 @@
 #include "diagnostics.hpp"
 #include "stages.hpp"
 #include <algorithm>
-#include <fmt/core.h>
-#include <fmt/format.h>
 #include <numeric>
 #include <span>
 #include <utility>
@@ -496,88 +494,4 @@ Hw_image Hw_image::from_ir(Ir&& ir) {
   result.words = std::move(codegen.static_data);
   result.words.insert(result.words.end(), codegen.hw_code.begin(), codegen.hw_code.end());
   return result;
-}
-
-// ===========================================================================
-// Disassembly for debugging
-
-struct Imm_or_reg { uint32_t encoded; };
-
-template<> struct fmt::formatter<Imm_or_reg> {
-  constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
-  appender format(Imm_or_reg src, format_context& ctx) {
-    if (src.encoded & 1)
-      return format_to(ctx.out(), "r{}", src.encoded >> 1);
-    else
-      return format_to(ctx.out(), "0x{:x}", src.encoded >> 1);
-  }
-};
-
-struct Disassembler {
-  int current_addr;
-  std::span<const uint32_t> words;
-
-  constexpr static std::string_view insn_names[] = {
-    "halt",
-    "ld", "st",
-    "add", "sub", "mul", "div", "mod",
-    "equ", "gt ", "lt ",
-    "jmp", "jif",
-  };
-
-  void disasm_raw(std::string_view tag) {
-    fmt::print("{:3x}: ({}) 0x{:x}\n", current_addr, tag, words[current_addr]);
-    current_addr++;
-  }
-
-  void disasm_insn() {
-    uint32_t insn = words[current_addr];
-    uint32_t opcode = insn & 0xF;
-
-    const auto fmt_operands = [&] () -> std::string {
-      switch (static_cast<Hw_op>(opcode)) {
-        using enum Hw_op;
-      case halt: return fmt::format("0x{:x}", insn >> 4);
-      case load:
-      case store:
-        return fmt::format(
-          "r{}, mem[{}]",
-          (insn >> 4) & 0x3F,
-          Imm_or_reg(insn >> 10)
-        );
-      case jmp: return fmt::format("0x{:x}", insn >> 4);
-      case jmp_if: return fmt::format("r{}, 0x{:x}", (insn >> 4) & 0x3F, insn >> 10);
-      default:
-        return fmt::format(
-          "r{}, {}, {}",
-          (insn >> 4) & 0x3F,
-          Imm_or_reg((insn >> 10) & 0x7FF),
-          Imm_or_reg(insn >> 21)
-        );
-      }
-    };
-
-    fmt::print("{:3x}: ", current_addr);
-    if (opcode < 0xD)
-      fmt::print("{} {}\n", insn_names[opcode], fmt_operands());
-    else
-      fmt::print("??? 0x{:08x}\n", insn);
-    current_addr++;
-  }
-};
-
-void Hw_image::disasm() const {
-  Disassembler dis = {
-    .current_addr = 0,
-    .words = words
-  };
-
-  dis.disasm_insn(); // first jmp
-  dis.disasm_raw("mmio");
-
-  while (dis.current_addr < data_break)
-    dis.disasm_raw("data");
-
-  while (dis.current_addr < dis.words.size())
-    dis.disasm_insn();
 }
