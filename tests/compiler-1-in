@@ -1,2 +1,2 @@
-(while (set c (read-mem 1))
-       (write-mem 1 c))
+(while (set c (read-mem 3))
+       (write-mem 3 c))

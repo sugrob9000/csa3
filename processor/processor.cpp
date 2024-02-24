@@ -7,7 +7,7 @@ namespace {
 
 // MMIO inside memory manager is magic
 
-constexpr u32 mmio_addr = 200;
+constexpr u32 mmio_addr = 0x3;
 
 void mmio_push(u32 c) {
   std::cout << char(c) << std::flush;
@@ -54,7 +54,6 @@ Processor::Alu::Op binop_to_alu(Opcode opcode) {
 } // anon namespace
 
 
-
 Processor::Processor(std::span<const u32> image) {
   // Load memory image.
   // Doing it this way means that memory outside the image is not
@@ -76,7 +75,7 @@ Processor::Processor(std::span<const u32> image) {
 }
 
 void Processor::print_state() const {
-  LOG("============= vvvvvvvvvvv =============");
+  LOG("=======================================");
   if (ctrl.stall)
     LOG("STALLED {}", ctrl.stall);
   LOG(
@@ -84,6 +83,7 @@ void Processor::print_state() const {
     ctrl.mem_write, ctrl.mem_read,
     ctrl.dest_reg_write, ctrl.imm1, ctrl.imm2
   );
+  LOG("fetch-head: 0x{:x}, fetched-insn: 0x{:x}", fetch.addr, fetch.fetched_insn);
   {
     LOG_NOLN("non-0 regs:");
     for (int i = 0; i < 64; i++) {
@@ -104,7 +104,7 @@ bool Processor::next_tick() {
   // we need to carefully order the propagations to simulate the way
   // it "would have happened" in a real circuit
 
-  get_ctrl_signals();
+  propagate_ctrl_signals();
   print_state();
 
   if (ctrl.halt) {
@@ -112,8 +112,8 @@ bool Processor::next_tick() {
     return false;
   }
 
-  mem_perform();
   reg_readout();
+  mem_perform();
 
   decoder_perform();
 
@@ -121,20 +121,21 @@ bool Processor::next_tick() {
   alu_perform();
 
   reg_writeback();
-  mem_update_inputs();
 
   return true;
 }
 
-void Processor::get_ctrl_signals() {
+void Processor::propagate_ctrl_signals() {
   // Latest decoded signals become current control signals (control register latches)
   ctrl = next_ctrl;
 
+  // If control unit is stalled, neuter any signals that would cause visible effects
   if (ctrl.stall > 0) {
-    // If control unit is stalled, disable signals that would cause visible effects
     ctrl.mem_write = false;
     ctrl.dest_reg_write = false;
     ctrl.halt = false;
+    if (ctrl.stall < 3)
+      ctrl.sel_fetch_head = Fetch::Head_mux::from_inc;
   }
 
   { // Verify state
@@ -146,8 +147,23 @@ void Processor::get_ctrl_signals() {
 }
 
 void Processor::mem_perform() {
+  mem.addr_mux_from_fetch = fetch.addr;
+  mem.addr_mux_from_imm1 = ctrl.imm1;
+  mem.addr_mux_from_src1 = reg.src1;
+
+  mem.addr = [&] {
+    switch (ctrl.sel_mem_addr) {
+      case Mem::Addr_mux::from_fetch: return mem.addr_mux_from_fetch;
+      case Mem::Addr_mux::from_imm1: return mem.addr_mux_from_imm1;
+      case Mem::Addr_mux::from_src1: return mem.addr_mux_from_src1;
+    }
+    FATAL("Bad sel_mem_addr");
+  }();
+
+  mem.wdata = reg.src2;
+
   if (ctrl.mem_write) {
-    LOG("write {} <- 0x{:x}", mem.addr, mem.wdata);
+    LOG("write [0x{:x}] <- 0x{:x}", mem.addr, mem.wdata);
     if (mem.addr == mmio_addr)
       mmio_push(mem.wdata);
     else if (mem.addr < mem.memory.size())
@@ -160,7 +176,7 @@ void Processor::mem_perform() {
       mem.rdata = mem.memory[mem.addr];
     else
       mem.rdata = 0xBADF00D;
-    LOG("read {} -> 0x{:x}", mem.addr, mem.rdata);
+    LOG("read [0x{:x}] -> 0x{:x}", mem.addr, mem.rdata);
   }
 }
 
@@ -174,19 +190,16 @@ void Processor::decoder_perform() {
   decoder_in = fetch.fetched_insn;
   next_ctrl = decode_insn(decoder_in);
 
-  if (ctrl.stall) {
-    assert(!ctrl.doing_jif);
+  if (ctrl.stall)
     next_ctrl.stall = ctrl.stall - 1;
-  }
 
-  if (ctrl.doing_jif && reg.src1 != 0) {
-    assert(!ctrl.stall);
+  if (ctrl.doing_jif && reg.src1 != 0)
     next_ctrl.stall = 2;
-  }
 }
 
 void Processor::fetch_perform() {
-  fetch.fetched_insn = mem.rdata;
+  if (!ctrl.stall_fetched_insn_mux)
+    fetch.fetched_insn = mem.rdata;
 
   fetch.next_head_from_inc = fetch.addr + 1;
   fetch.next_head_from_jmp = ctrl.imm1;
@@ -255,29 +268,8 @@ void Processor::reg_writeback() {
     case Reg::Dest_mux::from_mem: dest = reg.dest_mux_from_mem; break;
     case Reg::Dest_mux::from_alu: dest = reg.dest_mux_from_alu; break;
     }
-    LOG(
-      "Writing to dest: r{} <- 0x{:x} (srcs 0x{:x}, 0x{:x})",
-      ctrl.sel_dest_regid, dest,
-      alu.src1, alu.src2
-    );
+    LOG("Wrote to dest: r{} <- 0x{:x}", ctrl.sel_dest_regid, dest);
   }
-}
-
-void Processor::mem_update_inputs() {
-  mem.addr_mux_from_fetch = fetch.addr;
-  mem.addr_mux_from_imm1 = ctrl.imm1;
-  mem.addr_mux_from_src1 = reg.src1;
-
-  mem.addr = [&] {
-    switch (ctrl.sel_mem_addr) {
-      case Mem::Addr_mux::from_fetch: return mem.addr_mux_from_fetch;
-      case Mem::Addr_mux::from_imm1: return mem.addr_mux_from_imm1;
-      case Mem::Addr_mux::from_src1: return mem.addr_mux_from_src1;
-    }
-    FATAL("Bad sel_mem_addr");
-  }();
-
-  mem.wdata = reg.dest;
 }
 
 
@@ -299,10 +291,37 @@ auto Processor::decode_insn(u32 insn) -> Control_signals {
   case Opcode::halt:
     result.halt = true;
     break;
+
   case Opcode::load:
-  case Opcode::store:
-    LOG("I don't like memops");
+  case Opcode::store: {
+    LOG_NOLN("Decoding memop... ");
+    if (insn & (1u << 10)) {
+      result.sel_mem_addr = Mem::Addr_mux::from_src1;
+      result.sel_src1_regid = (insn >> 11) & 0x3F;
+      LOG_NOLN("mem[r{}]", result.sel_src1_regid);
+    } else {
+      result.sel_mem_addr = Mem::Addr_mux::from_imm1;
+      result.imm1 = insn >> 11;
+      LOG_NOLN("mem[0x{:x}]", result.imm1);
+    }
+
+    result.sel_fetch_head = Fetch::Head_mux::from_same;
+    result.stall_fetched_insn_mux = true;
+
+    if (opcode == Opcode::load) {
+      result.sel_dest_regid = (insn >> 4) & 0x3F;
+      result.sel_reg_dest = Reg::Dest_mux::from_mem;
+      result.dest_reg_write = true;
+      LOG(" -> r{}", result.sel_dest_regid);
+    } else {
+      result.sel_src2_regid = (insn >> 4) & 0x3F;
+      result.mem_write = true;
+      result.mem_read = false;
+      LOG(" <- r{}", result.sel_src2_regid);
+    }
+
     break;
+  }
   case Opcode::jmp: {
     result.stall = 3;
     result.sel_fetch_head = Fetch::Head_mux::from_jmp;
@@ -335,6 +354,7 @@ auto Processor::decode_insn(u32 insn) -> Control_signals {
 
     result.dest_reg_write = true;
     result.sel_reg_dest = Reg::Dest_mux::from_alu;
+    result.sel_dest_regid = (insn >> 4) & 0x3F;
 
     LOG("Decoded binop");
     break;

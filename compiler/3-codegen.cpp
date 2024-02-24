@@ -215,6 +215,9 @@ struct Codegen {
         return mem.addr << 11;
       }
     );
+    // Add nops before every memop
+    hw_code.push_back(0x3 | (1u << 10));
+    hw_code.push_back(0x3 | (1u << 10));
     hw_code.push_back(static_cast<uint32_t>(op) | (reg.id << 4) | high_bits);
   }
 

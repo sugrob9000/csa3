@@ -7,6 +7,8 @@
 
 namespace {
 
+constexpr uint32_t mmio_addr = 0x3;
+
 struct Compiler {
   // The eventual output of this stage
   std::vector<uint32_t> static_data;
@@ -214,7 +216,7 @@ struct Compiler {
 
     Label top = label_here();
     Ir::Variable character = emit_load(new_var(), pointer);
-    emit_store(character, Ir::Constant(1));
+    emit_store(character, Ir::Constant(mmio_addr));
 
     Ir::Variable tmp = new_var();
     emit(Ir::Op::add, tmp, pointer, Ir::Constant(1));
@@ -314,8 +316,10 @@ Ir Ir::compile(Ast& ast) {
   Compiler compiler;
 
   // - Reserve a word at 0x0 for a jump to the code
-  // - Reserve a word at 0x1 for MMIO
-  compiler.static_data.resize(2);
+  // - Reserve 2 more words to guard MMIO against prefetch
+  // - Reserve a word at 0x3 for MMIO
+  compiler.static_data.resize(4);
+  assert(mmio_addr < compiler.static_data.size());
 
   for (auto& expr: ast.sexprs)
     compiler.compile_parens(expr);

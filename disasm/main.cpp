@@ -62,10 +62,10 @@ int main(int argc, char** argv) {
         );
       }
     };
-    fmt::print("{:3x}: ", addr);
+    fmt::print("{:3x}: 0x{:08x} ", addr, insn);
     if (opcode < 0xD)
       fmt::print("{} {}\n", insn_names[opcode], fmt_operands());
     else
-      fmt::print("??? 0x{:08x}\n", insn);
+      fmt::print("???\n", insn);
   }
 }

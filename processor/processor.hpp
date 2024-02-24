@@ -59,6 +59,7 @@ struct Processor {
     u32 next_head_from_jmp;
 
     u32 fetched_insn;
+
     u32 addr;
   } fetch = {};
 
@@ -85,6 +86,7 @@ struct Processor {
 
     Fetch::Head_mux sel_fetch_head;
     bool doing_jif;
+    bool stall_fetched_insn_mux;
 
     u32 imm1;
     u32 imm2;
@@ -94,14 +96,13 @@ struct Processor {
 
   static Control_signals decode_insn(u32);
 
-  void get_ctrl_signals();
+  void propagate_ctrl_signals();
   void mem_perform();
   void reg_readout();
   void decoder_perform();
   void fetch_perform();
   void alu_perform();
   void reg_writeback();
-  void mem_update_inputs();
 };
 
 
