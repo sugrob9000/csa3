@@ -1,5 +1,7 @@
 # Лабораторная №3 на C++
 
+Соколов Иван Денисович, P33111
+
 Вариант
 ```lisp | risc | neum | hw | instr | binary | stream | mem | pstr | prob5 | pipeline```
 
@@ -35,6 +37,8 @@ expr = paren | number | identifier | string-literal
 * Сравнения `>`, `<`, `=`
 
 ## Компилятор
+
+Компилятор однопроходный, не оптимизирующий.
 
 1. Преобразует текстовый поток в дерево ([1-parse.cpp](./compiler/1-parse.cpp))
 2. Обходя дерево в аппликативном порядке, генерирует IR ([2-gen-ir.cpp](./compiler/2-gen-ir.cpp))
@@ -104,7 +108,7 @@ JMP-IF  [6 cond id] [22     imm absolute dest address         ]
 
 ## Организация памяти
 
-Архитектура фон Неймановская. Данные и код в одном адресном пространстве.
+Архитектура фон Неймана. Данные и код в одном адресном пространстве.
 
 Было решено расположить данные в начале памяти, до кода (это упрощало компилятор).
 Поскольку точка входа процессора -- адрес 0x0, то этот адрес резервируется под `jmp`
@@ -128,13 +132,8 @@ JMP-IF  [6 cond id] [22     imm absolute dest address         ]
 
 ## Схемы процессора
 
-### DataPath
-
-
-
-### ControlUnit
-
-
+![Processor](./datapath.png)
+![Extras](./control.png)
 
 ## Тестирование
 
@@ -158,8 +157,7 @@ clang-tidy, build-essential.
   (write-mem 3 c))
 ```
 
-Компилятор оттранслирует её в следующий код (бинарник дизассемблирован утилитой [disasm](./disasm/main.cpp)):
-
+Компилятор даёт следующий код (бинарник дизассемблирован утилитой [disasm](./disasm/main.cpp)):
 ```text
   0: 0x0000004b jmp 0x4
   1: [ unused ]
@@ -178,4 +176,211 @@ clang-tidy, build-essential.
   e: 0x0001ffe2 st r62, mem[r63]
   f: 0x0000004b jmp 0x4
  10: 0x00000000 halt 0x0
+```
+
+Пусть входной поток содержит строку "Hi".
+
+Тогда потактовая трассировка процессора такая:
+```text
+After tick 0: 
+  Mem: addr=0xffffffff, wdata=0x0, rdata=0x3
+  Reg: (all 0)
+  Fetch head=0x0 insn=0x3
+  Control: src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x3
+After tick 1: 
+  Mem: addr=0x0, wdata=0x0, rdata=0x4b
+  Reg: (all 0)
+  Fetch head=0x1 insn=0x4b
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x3
+After tick 2: 
+  Mem: addr=0x1, wdata=0x0, rdata=0x0
+  Reg: (all 0)
+  Fetch head=0x2 insn=0x0
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x4b
+After tick 3: 
+  Mem: addr=0x2, wdata=0x0, rdata=0x0
+  Reg: (all 0)
+  Fetch head=0x4 insn=0x0
+  Control: +STALL:3 +mem-read src1=0 src2=0 dest=0 imm1=0x4 imm2=0x0
+  Decode in=0x0
+After tick 4: 
+  Mem: addr=0x4, wdata=0x0, rdata=0x403
+  Reg: (all 0)
+  Fetch head=0x5 insn=0x403
+  Control: +STALL:2 +mem-read src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x0
+After tick 5: 
+  Mem: addr=0x5, wdata=0x0, rdata=0x403
+  Reg: (all 0)
+  Fetch head=0x6 insn=0x403
+  Control: +STALL:1 +mem-read src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x403
+After tick 6: 
+  Mem: addr=0x6, wdata=0x0, rdata=0x1801
+  Reg: (all 0)
+  Fetch head=0x7 insn=0x1801
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x403
+After tick 7: 
+  Mem: addr=0x7, wdata=0x0, rdata=0x413
+  Reg: (all 0)
+  Fetch head=0x8 insn=0x413
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x1801
+After tick 8: 
+  Mem: addr=0x3, wdata=0x0, rdata=0x48
+  Reg: r0=0x48; (others 0)
+  Fetch head=0x8 insn=0x413
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 +fetch-stall imm1=0x3 imm2=0x0
+  Decode in=0x413
+After tick 9: 
+  Mem: addr=0x8, wdata=0x48, rdata=0xc08
+  Reg: r0=0x48; r1=0x48; (others 0)
+  Fetch head=0x9 insn=0xc08
+  Control: +mem-read +dest-write src1=0 src2=0 dest=1 imm1=0x0 imm2=0x0
+  Decode in=0x413
+After tick 10: 
+  Mem: addr=0x9, wdata=0x48, rdata=0x400c
+  Reg: r0=0x48; r1=0x48; (others 0)
+  Fetch head=0xa insn=0x400c
+  Control: +mem-read +dest-write src1=0 src2=0 dest=1 imm1=0x0 imm2=0x0
+  Decode in=0xc08
+After tick 11: 
+  Mem: addr=0xa, wdata=0x48, rdata=0xfe3
+  Reg: r1=0x48; (others 0)
+  Fetch head=0xb insn=0xfe3
+  Control: +mem-read +dest-write src1=1 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x400c
+After tick 12: 
+  Mem: addr=0xb, wdata=0x0, rdata=0x1bf3
+  Reg: r1=0x48; (others 0)
+  Fetch head=0xc insn=0x1bf3
+  Control: +mem-read src1=0 src2=0 dest=0 +jif imm1=0x10 imm2=0x0
+  Decode in=0xfe3
+After tick 13: 
+  Mem: addr=0xc, wdata=0x0, rdata=0x403
+  Reg: r1=0x48; r62=0x48; (others 0)
+  Fetch head=0xd insn=0x403
+  Control: +mem-read +dest-write src1=1 src2=0 dest=62 imm1=0x0 imm2=0x0
+  Decode in=0x1bf3
+After tick 14: 
+  Mem: addr=0xd, wdata=0x0, rdata=0x403
+  Reg: r1=0x48; r62=0x48; r63=0x3; (others 0)
+  Fetch head=0xe insn=0x403
+  Control: +mem-read +dest-write src1=0 src2=0 dest=63 imm1=0x3 imm2=0x0
+  Decode in=0x403
+After tick 15: 
+  Mem: addr=0xe, wdata=0x0, rdata=0x1ffe2
+  Reg: r1=0x48; r62=0x48; r63=0x3; (others 0)
+  Fetch head=0xf insn=0x1ffe2
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x403
+After tick 16: 
+  Mem: addr=0xf, wdata=0x0, rdata=0x4b
+  Reg: r1=0x48; r62=0x48; r63=0x3; (others 0)
+  Fetch head=0x10 insn=0x4b
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x1ffe2
+After tick 17: 
+  Mem: addr=0x3, wdata=0x48, rdata=0x4b
+  Reg: r1=0x48; r62=0x48; r63=0x3; (others 0)
+  Fetch head=0x10 insn=0x4b
+  Control: +mem-write src1=63 src2=62 dest=0 +fetch-stall imm1=0x0 imm2=0x0
+  Decode in=0x4b
+
+.............
+
+After tick 32: 
+  Mem: addr=0x3, wdata=0x69, rdata=0x4b
+  Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x10 insn=0x4b
+  Control: +mem-write src1=63 src2=62 dest=0 +fetch-stall imm1=0x0 imm2=0x0
+  Decode in=0x4b
+After tick 33: 
+  Mem: addr=0x10, wdata=0x0, rdata=0x0
+  Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x4 insn=0x0
+  Control: +STALL:3 +mem-read src1=0 src2=0 dest=0 imm1=0x4 imm2=0x0
+  Decode in=0x4b
+After tick 34: 
+  Mem: addr=0x4, wdata=0x0, rdata=0x403
+  Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x5 insn=0x403
+  Control: +STALL:2 +mem-read src1=0 src2=0 dest=0 imm1=0x4 imm2=0x0
+  Decode in=0x0
+After tick 35: 
+  Mem: addr=0x5, wdata=0x0, rdata=0x403
+  Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x6 insn=0x403
+  Control: +STALL:1 +mem-read src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x403
+After tick 36: 
+  Mem: addr=0x6, wdata=0x0, rdata=0x1801
+  Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x7 insn=0x1801
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x403
+After tick 37: 
+  Mem: addr=0x7, wdata=0x0, rdata=0x413
+  Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x8 insn=0x413
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x1801
+After tick 38: 
+  Mem: addr=0x3, wdata=0x0, rdata=0x0
+  Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x8 insn=0x413
+  Control: +mem-read +dest-write src1=0 src2=0 dest=0 +fetch-stall imm1=0x3 imm2=0x0
+  Decode in=0x413
+After tick 39: 
+  Mem: addr=0x8, wdata=0x0, rdata=0xc08
+  Reg: r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x9 insn=0xc08
+  Control: +mem-read +dest-write src1=0 src2=0 dest=1 imm1=0x0 imm2=0x0
+  Decode in=0x413
+After tick 40: 
+  Mem: addr=0x9, wdata=0x0, rdata=0x400c
+  Reg: r62=0x69; r63=0x3; (others 0)
+  Fetch head=0xa insn=0x400c
+  Control: +mem-read +dest-write src1=0 src2=0 dest=1 imm1=0x0 imm2=0x0
+  Decode in=0xc08
+After tick 41: 
+  Mem: addr=0xa, wdata=0x0, rdata=0xfe3
+  Reg: r0=0x1; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0xb insn=0xfe3
+  Control: +mem-read +dest-write src1=1 src2=0 dest=0 imm1=0x0 imm2=0x0
+  Decode in=0x400c
+After tick 42: 
+  Mem: addr=0xb, wdata=0x1, rdata=0x1bf3
+  Reg: r0=0x1; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x10 insn=0x1bf3
+  Control: +mem-read src1=0 src2=0 dest=0 +jif imm1=0x10 imm2=0x0
+  Decode in=0xfe3
+After tick 43: 
+  Mem: addr=0x10, wdata=0x1, rdata=0x0
+  Reg: r0=0x1; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x11 insn=0x0
+  Control: +STALL:2 +mem-read src1=1 src2=0 dest=62 imm1=0x0 imm2=0x0
+  Decode in=0x1bf3
+After tick 44: 
+  Mem: addr=0x11, wdata=0x1, rdata=0xbadf00d
+  Reg: r0=0x1; r62=0x69; r63=0x3; (others 0)
+  Fetch head=0x12 insn=0xbadf00d
+  Control: +STALL:1 +mem-read src1=0 src2=0 dest=63 imm1=0x3 imm2=0x0
+  Decode in=0x0
+Ticked: 45, stalled: 11
+```
+Заметим, что из 45 тактов процессор простаивал в "пузырях" всего 11. В остальное время мы
+достигали заветного показателя в одну инструкцию/такт -- втрое большая пропускная
+способность, чем без конвеера.
+
+## Аналитика
+
+```text
+| Соколов Иван Денисович | hello        | 1  | 144 | 36  | - | 198 | lisp | risc | neum | hw | instr | binary | stream | mem | pstr | prob5 | pipeline |
+| Соколов Иван Денисович | cat          | 2  | 68  | 17  | - | 45  | lisp | risc | neum | hw | instr | binary | stream | mem | pstr | prob5 | pipeline |
+| Соколов Иван Денисович | hello_user   | 11 | 632 | 158 | - | 923 | lisp | risc | neum | hw | instr | binary | stream | mem | pstr | prob5 | pipeline |
 ```

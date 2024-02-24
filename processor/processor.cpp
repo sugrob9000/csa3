@@ -74,30 +74,49 @@ Processor::Processor(std::span<const u32> image) {
   }
 }
 
-void Processor::print_state() const {
-  LOG("=======================================");
-  if (ctrl.stall)
-    LOG("STALLED {}", ctrl.stall);
-  LOG(
-    "memw: {}, memr: {}, destw: {}, imm1: 0x{:x}, imm2: 0x{:x}",
-    ctrl.mem_write, ctrl.mem_read,
-    ctrl.dest_reg_write, ctrl.imm1, ctrl.imm2
-  );
-  LOG("fetch-head: 0x{:x}, fetched-insn: 0x{:x}", fetch.addr, fetch.fetched_insn);
-  {
-    LOG_NOLN("non-0 regs:");
-    for (int i = 0; i < 64; i++) {
-      u32 r = reg.registers[i];
-      if (r != 0)
-        LOG_NOLN(" r{} = 0x{:X};", i, r);
-    }
-    LOG_NOLN("\n");
-  }
-  LOG("mem: addr 0x{:x}, wdata 0x{:x}, rdata 0x{:x}", mem.addr, mem.wdata, mem.rdata);
-}
-
 // ===========================================================================
 // Simulating the processor
+
+void Processor::print_state() {
+  LOG("After tick {}: ", stats.ticked);
+
+  LOG("  Mem: addr={:#x}, wdata={:#x}, rdata={:#x}", mem.addr, mem.wdata, mem.rdata);
+
+  {
+    bool all_zero = true;
+    LOG_NOLN("  Reg:");
+    for (int i = 0; i < 64; i++) {
+      if (reg.registers[i] != 0) {
+        LOG_NOLN(" r{}={:#x};", i, reg.registers[i]);
+        all_zero = false;
+      }
+    }
+    if (all_zero)
+      LOG(" (all 0)");
+    else
+      LOG(" (others 0)");
+  }
+
+  LOG("  Fetch head={:#x} insn={:#x}", fetch.addr, fetch.fetched_insn);
+
+  LOG_NOLN("  Control:");
+  if (ctrl.halt) LOG_NOLN(" +HALT");
+  if (ctrl.stall) LOG_NOLN(" +STALL:{}", int(ctrl.stall));
+  if (ctrl.mem_write) LOG_NOLN(" +mem-write");
+  if (ctrl.mem_read) LOG_NOLN(" +mem-read");
+  if (ctrl.dest_reg_write) LOG_NOLN(" +dest-write");
+  LOG_NOLN(
+    " src1={} src2={} dest={}",
+    ctrl.sel_src1_regid,
+    ctrl.sel_src2_regid,
+    ctrl.sel_dest_regid
+  );
+  if (ctrl.doing_jif) LOG_NOLN(" +jif");
+  if (ctrl.stall_fetched_insn_mux) LOG_NOLN(" +fetch-stall");
+  LOG(" imm1={:#x} imm2={:#x}", ctrl.imm1, ctrl.imm2);
+  LOG("  Decode in={:#x}", decoder_in);
+}
+
 
 bool Processor::next_tick() {
   // What happens in this function is thought of as simultaneous, so
@@ -105,22 +124,22 @@ bool Processor::next_tick() {
   // it "would have happened" in a real circuit
 
   propagate_ctrl_signals();
-  print_state();
 
-  if (ctrl.halt) {
-    LOG("Halting");
+  if (ctrl.halt)
     return false;
-  }
 
   reg_readout();
   mem_perform();
-
   decoder_perform();
-
   fetch_perform();
   alu_perform();
-
   reg_writeback();
+
+  print_state();
+
+  stats.ticked++;
+  if (ctrl.stall)
+    stats.stalled++;
 
   return true;
 }
@@ -163,7 +182,6 @@ void Processor::mem_perform() {
   mem.wdata = reg.src2;
 
   if (ctrl.mem_write) {
-    LOG("write [0x{:x}] <- 0x{:x}", mem.addr, mem.wdata);
     if (mem.addr == mmio_addr)
       mmio_push(mem.wdata);
     else if (mem.addr < mem.memory.size())
@@ -176,7 +194,6 @@ void Processor::mem_perform() {
       mem.rdata = mem.memory[mem.addr];
     else
       mem.rdata = 0xBADF00D;
-    LOG("read [0x{:x}] -> 0x{:x}", mem.addr, mem.rdata);
   }
 }
 
@@ -210,24 +227,18 @@ void Processor::fetch_perform() {
 
   fetch.addr = [&] {
     if (ctrl.doing_jif) {
-      if (reg.src1) {
-        LOG("Fetch: passed jmp-if");
+      if (reg.src1)
         return fetch.next_head_from_jmp;
-      } else {
-        LOG("Fetch: failed jmp-if");
+      else
         return fetch.next_head_from_inc;
-      }
     } else {
       switch (ctrl.sel_fetch_head) {
         using enum Fetch::Head_mux;
       case from_inc:
-        LOG("Fetch: +1");
         return fetch.next_head_from_inc;
       case from_jmp:
-        LOG("Fetch: jmp");
         return fetch.next_head_from_jmp;
       case from_same:
-        LOG("Fetch: stall, no change");
         return fetch.addr;
       }
       FATAL("Bad fetch mux");
@@ -272,7 +283,6 @@ void Processor::reg_writeback() {
     case Reg::Dest_mux::from_mem: dest = reg.dest_mux_from_mem; break;
     case Reg::Dest_mux::from_alu: dest = reg.dest_mux_from_alu; break;
     }
-    LOG("Wrote to dest: r{} <- 0x{:x}", ctrl.sel_dest_regid, dest);
   }
 }
 
@@ -280,7 +290,6 @@ void Processor::reg_writeback() {
 auto Processor::decode_insn(u32 insn) -> Control_signals {
   // Decoder is magic
   Control_signals result {};
-  LOG("Decoding 0x{:x}", insn);
 
   // All cycles except store's first cycle need us to load memory
   // (either for insn fetch or for load's first cycle)
@@ -298,15 +307,12 @@ auto Processor::decode_insn(u32 insn) -> Control_signals {
 
   case Opcode::load:
   case Opcode::store: {
-    LOG_NOLN("Decoding memop... ");
     if (insn & (1u << 10)) {
       result.sel_mem_addr = Mem::Addr_mux::from_src1;
       result.sel_src1_regid = (insn >> 11) & 0x3F;
-      LOG_NOLN("mem[r{}]", result.sel_src1_regid);
     } else {
       result.sel_mem_addr = Mem::Addr_mux::from_imm1;
       result.imm1 = insn >> 11;
-      LOG_NOLN("mem[0x{:x}]", result.imm1);
     }
 
     result.sel_fetch_head = Fetch::Head_mux::from_same;
@@ -316,12 +322,10 @@ auto Processor::decode_insn(u32 insn) -> Control_signals {
       result.sel_dest_regid = (insn >> 4) & 0x3F;
       result.sel_reg_dest = Reg::Dest_mux::from_mem;
       result.dest_reg_write = true;
-      LOG(" -> r{}", result.sel_dest_regid);
     } else {
       result.sel_src2_regid = (insn >> 4) & 0x3F;
       result.mem_write = true;
       result.mem_read = false;
-      LOG(" <- r{}", result.sel_src2_regid);
     }
 
     break;
@@ -330,7 +334,6 @@ auto Processor::decode_insn(u32 insn) -> Control_signals {
     result.stall = 3;
     result.sel_fetch_head = Fetch::Head_mux::from_jmp;
     result.imm1 = insn >> 4;
-    LOG("Decoded jmp to 0x{:x}", result.imm1);
     break;
   }
   case Opcode::jmp_if: {
@@ -338,7 +341,6 @@ auto Processor::decode_insn(u32 insn) -> Control_signals {
     result.sel_fetch_head = Fetch::Head_mux::from_jmp;
     result.doing_jif = true;
     result.imm1 = insn >> 10;
-    LOG("Decoded jif r{} to 0x{:x}", result.sel_src1_regid, result.imm1);
     break;
   }
   default: {
@@ -359,8 +361,6 @@ auto Processor::decode_insn(u32 insn) -> Control_signals {
     result.dest_reg_write = true;
     result.sel_reg_dest = Reg::Dest_mux::from_alu;
     result.sel_dest_regid = (insn >> 4) & 0x3F;
-
-    LOG("Decoded binop");
     break;
   }
   }

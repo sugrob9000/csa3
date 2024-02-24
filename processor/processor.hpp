@@ -10,7 +10,13 @@ using u32 = uint32_t;
 struct Processor {
   explicit Processor(std::span<const u32> image);
   bool next_tick(); // returns: whether halted
-  void print_state() const;
+
+  void print_state();
+
+  struct {
+    int ticked = 0;
+    int stalled = 0;
+  } stats;
 
   // =========================================================================
   // Processor state...

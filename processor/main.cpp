@@ -26,8 +26,6 @@ int main(int argc, char** argv) {
   auto image_bytes = get_whole_file(image_filename);
   assert(image_bytes.size() % sizeof(u32) == 0);
 
-  LOG("Loaded image '{}'", image_filename);
-
   auto image_u32s = std::span{
     reinterpret_cast<const u32*>(image_bytes.data()),
     image_bytes.size() / sizeof(u32)
@@ -37,4 +35,6 @@ int main(int argc, char** argv) {
 
   while (proc.next_tick())
     ;
+
+  LOG("Ticked: {}, stalled: {}", proc.stats.ticked, proc.stats.stalled);
 }
