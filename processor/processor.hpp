@@ -110,15 +110,3 @@ struct Processor {
   void alu_perform();
   void reg_writeback();
 };
-
-
-// ===========================================================================
-// Simpler "magic" processor with same interface, for testing program logic
-
-struct Simple_processor {
-  explicit Simple_processor(std::span<const u32> image);
-  bool next_tick();
-  std::vector<u32> memory;
-  u32 registers[64] = {};
-  u32 pc = 0;
-};

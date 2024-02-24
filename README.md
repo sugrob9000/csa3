@@ -13,15 +13,29 @@
 Типизации нет: все выражения целочисленные, 32-битные.
 
 ```bnf
-program = paren | paren program
+program ::= "" | paren program
 
-paren = "(" expr-list ")"
+paren ::= "(" expr-list ")"
 
-expr-list = expr | expr expr-list
+expr-list ::= expr | expr expr-list
 
-expr = paren | number | identifier | string-literal
+expr ::= raw-expr
+raw-expr ::= paren | integer | identifier | string-literal
+
+integer ::= "+" digit-seq | "-" digit-seq | digit-seq
+digit-seq ::= digit | digit digit-seq
+digit ::= "0" | "1" | ... | "8" | "9"
+
+identifier ::= "+" | "-" | id-start id-cont
+id-cont ::= (всё, кроме пробельных символов, кавычек, и "(", ")", ";")
+id-start ::= (id-cont, кроме также цифр)
+
+string-literal ::= "\"" syms-noquote "\""
+syms-noquote ::= "" | sym-noquote syms-noquote
+sym-noquote ::= (всё, кроме кавычек)
 ```
-Названия правил `number`, `identifier`, `string-literal` говорят сами за себя.
+Грамматика с точностью до чувствительности к пробельным символам.
+Названия правил `integer`, `identifier`, `string-literal` говорят сами за себя.
 
 Пользовательских функций нет, распознаются встроенные:
 
@@ -182,109 +196,109 @@ clang-tidy, build-essential.
 
 Тогда потактовая трассировка процессора такая:
 ```text
-After tick 0: 
+After tick 0:
   Mem: addr=0xffffffff, wdata=0x0, rdata=0x3
   Reg: (all 0)
   Fetch head=0x0 insn=0x3
   Control: src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x3
-After tick 1: 
+After tick 1:
   Mem: addr=0x0, wdata=0x0, rdata=0x4b
   Reg: (all 0)
   Fetch head=0x1 insn=0x4b
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x3
-After tick 2: 
+After tick 2:
   Mem: addr=0x1, wdata=0x0, rdata=0x0
   Reg: (all 0)
   Fetch head=0x2 insn=0x0
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x4b
-After tick 3: 
+After tick 3:
   Mem: addr=0x2, wdata=0x0, rdata=0x0
   Reg: (all 0)
   Fetch head=0x4 insn=0x0
   Control: +STALL:3 +mem-read src1=0 src2=0 dest=0 imm1=0x4 imm2=0x0
   Decode in=0x0
-After tick 4: 
+After tick 4:
   Mem: addr=0x4, wdata=0x0, rdata=0x403
   Reg: (all 0)
   Fetch head=0x5 insn=0x403
   Control: +STALL:2 +mem-read src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x0
-After tick 5: 
+After tick 5:
   Mem: addr=0x5, wdata=0x0, rdata=0x403
   Reg: (all 0)
   Fetch head=0x6 insn=0x403
   Control: +STALL:1 +mem-read src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x403
-After tick 6: 
+After tick 6:
   Mem: addr=0x6, wdata=0x0, rdata=0x1801
   Reg: (all 0)
   Fetch head=0x7 insn=0x1801
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x403
-After tick 7: 
+After tick 7:
   Mem: addr=0x7, wdata=0x0, rdata=0x413
   Reg: (all 0)
   Fetch head=0x8 insn=0x413
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x1801
-After tick 8: 
+After tick 8:
   Mem: addr=0x3, wdata=0x0, rdata=0x48
   Reg: r0=0x48; (others 0)
   Fetch head=0x8 insn=0x413
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 +fetch-stall imm1=0x3 imm2=0x0
   Decode in=0x413
-After tick 9: 
+After tick 9:
   Mem: addr=0x8, wdata=0x48, rdata=0xc08
   Reg: r0=0x48; r1=0x48; (others 0)
   Fetch head=0x9 insn=0xc08
   Control: +mem-read +dest-write src1=0 src2=0 dest=1 imm1=0x0 imm2=0x0
   Decode in=0x413
-After tick 10: 
+After tick 10:
   Mem: addr=0x9, wdata=0x48, rdata=0x400c
   Reg: r0=0x48; r1=0x48; (others 0)
   Fetch head=0xa insn=0x400c
   Control: +mem-read +dest-write src1=0 src2=0 dest=1 imm1=0x0 imm2=0x0
   Decode in=0xc08
-After tick 11: 
+After tick 11:
   Mem: addr=0xa, wdata=0x48, rdata=0xfe3
   Reg: r1=0x48; (others 0)
   Fetch head=0xb insn=0xfe3
   Control: +mem-read +dest-write src1=1 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x400c
-After tick 12: 
+After tick 12:
   Mem: addr=0xb, wdata=0x0, rdata=0x1bf3
   Reg: r1=0x48; (others 0)
   Fetch head=0xc insn=0x1bf3
   Control: +mem-read src1=0 src2=0 dest=0 +jif imm1=0x10 imm2=0x0
   Decode in=0xfe3
-After tick 13: 
+After tick 13:
   Mem: addr=0xc, wdata=0x0, rdata=0x403
   Reg: r1=0x48; r62=0x48; (others 0)
   Fetch head=0xd insn=0x403
   Control: +mem-read +dest-write src1=1 src2=0 dest=62 imm1=0x0 imm2=0x0
   Decode in=0x1bf3
-After tick 14: 
+After tick 14:
   Mem: addr=0xd, wdata=0x0, rdata=0x403
   Reg: r1=0x48; r62=0x48; r63=0x3; (others 0)
   Fetch head=0xe insn=0x403
   Control: +mem-read +dest-write src1=0 src2=0 dest=63 imm1=0x3 imm2=0x0
   Decode in=0x403
-After tick 15: 
+After tick 15:
   Mem: addr=0xe, wdata=0x0, rdata=0x1ffe2
   Reg: r1=0x48; r62=0x48; r63=0x3; (others 0)
   Fetch head=0xf insn=0x1ffe2
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x403
-After tick 16: 
+After tick 16:
   Mem: addr=0xf, wdata=0x0, rdata=0x4b
   Reg: r1=0x48; r62=0x48; r63=0x3; (others 0)
   Fetch head=0x10 insn=0x4b
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x1ffe2
-After tick 17: 
+After tick 17:
   Mem: addr=0x3, wdata=0x48, rdata=0x4b
   Reg: r1=0x48; r62=0x48; r63=0x3; (others 0)
   Fetch head=0x10 insn=0x4b
@@ -293,79 +307,79 @@ After tick 17:
 
 .............
 
-After tick 32: 
+After tick 32:
   Mem: addr=0x3, wdata=0x69, rdata=0x4b
   Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x10 insn=0x4b
   Control: +mem-write src1=63 src2=62 dest=0 +fetch-stall imm1=0x0 imm2=0x0
   Decode in=0x4b
-After tick 33: 
+After tick 33:
   Mem: addr=0x10, wdata=0x0, rdata=0x0
   Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x4 insn=0x0
   Control: +STALL:3 +mem-read src1=0 src2=0 dest=0 imm1=0x4 imm2=0x0
   Decode in=0x4b
-After tick 34: 
+After tick 34:
   Mem: addr=0x4, wdata=0x0, rdata=0x403
   Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x5 insn=0x403
   Control: +STALL:2 +mem-read src1=0 src2=0 dest=0 imm1=0x4 imm2=0x0
   Decode in=0x0
-After tick 35: 
+After tick 35:
   Mem: addr=0x5, wdata=0x0, rdata=0x403
   Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x6 insn=0x403
   Control: +STALL:1 +mem-read src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x403
-After tick 36: 
+After tick 36:
   Mem: addr=0x6, wdata=0x0, rdata=0x1801
   Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x7 insn=0x1801
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x403
-After tick 37: 
+After tick 37:
   Mem: addr=0x7, wdata=0x0, rdata=0x413
   Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x8 insn=0x413
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x1801
-After tick 38: 
+After tick 38:
   Mem: addr=0x3, wdata=0x0, rdata=0x0
   Reg: r1=0x69; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x8 insn=0x413
   Control: +mem-read +dest-write src1=0 src2=0 dest=0 +fetch-stall imm1=0x3 imm2=0x0
   Decode in=0x413
-After tick 39: 
+After tick 39:
   Mem: addr=0x8, wdata=0x0, rdata=0xc08
   Reg: r62=0x69; r63=0x3; (others 0)
   Fetch head=0x9 insn=0xc08
   Control: +mem-read +dest-write src1=0 src2=0 dest=1 imm1=0x0 imm2=0x0
   Decode in=0x413
-After tick 40: 
+After tick 40:
   Mem: addr=0x9, wdata=0x0, rdata=0x400c
   Reg: r62=0x69; r63=0x3; (others 0)
   Fetch head=0xa insn=0x400c
   Control: +mem-read +dest-write src1=0 src2=0 dest=1 imm1=0x0 imm2=0x0
   Decode in=0xc08
-After tick 41: 
+After tick 41:
   Mem: addr=0xa, wdata=0x0, rdata=0xfe3
   Reg: r0=0x1; r62=0x69; r63=0x3; (others 0)
   Fetch head=0xb insn=0xfe3
   Control: +mem-read +dest-write src1=1 src2=0 dest=0 imm1=0x0 imm2=0x0
   Decode in=0x400c
-After tick 42: 
+After tick 42:
   Mem: addr=0xb, wdata=0x1, rdata=0x1bf3
   Reg: r0=0x1; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x10 insn=0x1bf3
   Control: +mem-read src1=0 src2=0 dest=0 +jif imm1=0x10 imm2=0x0
   Decode in=0xfe3
-After tick 43: 
+After tick 43:
   Mem: addr=0x10, wdata=0x1, rdata=0x0
   Reg: r0=0x1; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x11 insn=0x0
   Control: +STALL:2 +mem-read src1=1 src2=0 dest=62 imm1=0x0 imm2=0x0
   Decode in=0x1bf3
-After tick 44: 
+After tick 44:
   Mem: addr=0x11, wdata=0x1, rdata=0xbadf00d
   Reg: r0=0x1; r62=0x69; r63=0x3; (others 0)
   Fetch head=0x12 insn=0xbadf00d
