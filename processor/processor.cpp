@@ -14,10 +14,10 @@ void mmio_push(u32 c) {
 }
 
 u32 mmio_get() {
-  if (char c; std::cin >> c)
-    return u32(c);
-  else
+  int c = std::cin.get();
+  if (c == -1)
     return 0;
+  return u32(c);
 }
 
 
