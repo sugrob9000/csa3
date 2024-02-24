@@ -202,6 +202,8 @@ struct Codegen {
   // =========================================================================
   // Emitting HW instructions
 
+  constexpr static uint32_t encoded_nop = 0x3 | (1u << 10);
+
   // Abuses the meaning of `Location`, but it has the tags we need
   void emit_memop(Hw_op op, Register reg, Location addr) {
     assert(op == Hw_op::load || op == Hw_op::store);
@@ -215,9 +217,9 @@ struct Codegen {
         return mem.addr << 11;
       }
     );
-    // Add nops before every memop
-    hw_code.push_back(0x3 | (1u << 10));
-    hw_code.push_back(0x3 | (1u << 10));
+    // HACK: Add nops before every memop
+    hw_code.push_back(encoded_nop);
+    hw_code.push_back(encoded_nop);
     hw_code.push_back(static_cast<uint32_t>(op) | (reg.id << 4) | high_bits);
   }
 

@@ -190,11 +190,15 @@ void Processor::decoder_perform() {
   decoder_in = fetch.fetched_insn;
   next_ctrl = decode_insn(decoder_in);
 
-  if (ctrl.stall)
+  if (ctrl.stall) {
+    assert(!ctrl.doing_jif);
     next_ctrl.stall = ctrl.stall - 1;
+  }
 
-  if (ctrl.doing_jif && reg.src1 != 0)
+  if (ctrl.doing_jif && reg.src1 != 0) {
+    assert(!ctrl.stall);
     next_ctrl.stall = 2;
+  }
 }
 
 void Processor::fetch_perform() {

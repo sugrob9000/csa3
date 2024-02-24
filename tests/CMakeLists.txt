@@ -1,7 +1,7 @@
-function(create_golden_test binary name)
+function(create_compiler_test name)
 	add_test(
 		NAME ${name}-run
-		COMMAND sh -c "${CMAKE_BINARY_DIR}/${binary} ${CMAKE_CURRENT_SOURCE_DIR}/${name}-in ${name}-out")
+		COMMAND sh -c "${CMAKE_BINARY_DIR}/compiler ${CMAKE_CURRENT_SOURCE_DIR}/${name}-in ${name}-binout && ${CMAKE_BINARY_DIR}/disasm ${name}-binout > ${name}-out")
 
 	add_test(
 		NAME ${name}-compare
@@ -17,7 +17,7 @@ function(create_golden_test binary name)
 	set_tests_properties(${name}-compare PROPERTIES FIXTURES_REQUIRED ${name}-fixture)
 endfunction()
 
-create_golden_test(compiler "compiler-1")
-create_golden_test(compiler "compiler-2")
-create_golden_test(compiler "compiler-3")
-create_golden_test(compiler "compiler-4")
+create_compiler_test("compiler-1")
+create_compiler_test("compiler-2")
+create_compiler_test("compiler-3")
+create_compiler_test("compiler-4")
