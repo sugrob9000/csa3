@@ -131,15 +131,12 @@ struct Lexer {
 } // anon namespace
 
 Ast Ast::parse_stream(std::istream& is) {
-  Lexer lexer(is);
-
   // `Parens::children` can cause relocation of children, but we only modify the
   // node at the stack's top, so invalidation can't happen where we can't expect it
   std::vector<Parens*> stack;
-
   Ast tree;
 
-  while (auto token = lexer.consume_token()) {
+  for (Lexer lexer(is); auto token = lexer.consume_token(); ) {
     if (stack.empty()) {
       // Root context is special: only parens can appear here
       token->match(

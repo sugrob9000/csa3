@@ -20,7 +20,7 @@ template<> struct fmt::formatter<Imm_or_reg> {
     if (src.encoded & 1)
       return format_to(ctx.out(), "r{}", src.encoded >> 1);
     else
-      return format_to(ctx.out(), "0x{:x}", src.encoded >> 1);
+      return format_to(ctx.out(), "{:#x}", src.encoded >> 1);
   }
 };
 
@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
 
     const auto fmt_operands = [&] () -> std::string {
       switch (opcode) {
-      case 0x0: return fmt::format("0x{:x}", insn >> 4);
+      case 0x0: return fmt::format("{:#x}", insn >> 4);
       case 0x1:
       case 0x2:
         return fmt::format(
@@ -51,8 +51,8 @@ int main(int argc, char** argv) {
           (insn >> 4) & 0x3F,
           Imm_or_reg(insn >> 10)
         );
-      case 0xB: return fmt::format("0x{:x}", insn >> 4);
-      case 0xC: return fmt::format("r{}, 0x{:x}", (insn >> 4) & 0x3F, insn >> 10);
+      case 0xB: return fmt::format("{:#x}", insn >> 4);
+      case 0xC: return fmt::format("r{}, {:#x}", (insn >> 4) & 0x3F, insn >> 10);
       default:
         return fmt::format(
           "r{}, {}, {}",
@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
         );
       }
     };
-    fmt::print("{:3x}: 0x{:08x} ", addr, insn);
+    fmt::print("{:3x}: {:#010x} ", addr, insn);
     if (opcode < 0xD)
       fmt::print("{} {}\n", insn_names[opcode], fmt_operands());
     else

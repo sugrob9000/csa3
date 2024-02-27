@@ -23,7 +23,7 @@ struct Lifetime {
   int end = std::numeric_limits<int>::min();
 };
 
-auto build_var_lifetimes(int num_variables, std::span<Ir::Insn> code) {
+auto build_var_lifetimes(int num_variables, std::span<const Ir::Insn> code) {
 	std::vector<Lifetime> result(num_variables);
 
   for (int insn_id = 0; insn_id < code.size(); insn_id++) {
@@ -52,7 +52,7 @@ struct Coloring_result {
 };
 
 Coloring_result color_variables
-(std::span<Lifetime> lives, uint32_t mem_base, int num_avail_regs) {
+(std::span<const Lifetime> lives, uint32_t mem_base, int num_avail_regs) {
   // Sort variables by ascending length of life, putting "hot" ones first
   std::vector<int> vars_by_life_length(lives.size());
   std::iota(vars_by_life_length.begin(), vars_by_life_length.end(), 0);
@@ -476,17 +476,11 @@ Hw_image Hw_image::from_ir(Ir&& ir) {
   auto code = std::move(ir.code);
   codegen.static_data = std::move(ir.data);
 
-  {
-    // This can be between 1 and `num_gp_registers`. There is no reason for it to
-    // be fewer than `num_gp_registers` other than to test spilling behavior
-    constexpr int registers_used = num_gp_registers;
-    auto lifetimes = build_var_lifetimes(ir.num_variables, code);
-    codegen.use_coloring(color_variables(
-      lifetimes,
-      codegen.static_data.size(),
-      registers_used
-    ));
-  }
+  codegen.use_coloring(color_variables(
+    build_var_lifetimes(ir.num_variables, code),
+    codegen.static_data.size(),
+    num_gp_registers
+  ));
 
   // Perform code generation
   for (Ir::Insn& insn: code)
