@@ -7,7 +7,7 @@
 // `std::variant`, augmented with a few convenience methods.
 
 template<typename... Args>
-struct One_of: std::variant<Args...> {
+struct Either: std::variant<Args...> {
   using std::variant<Args...>::variant;
 
   template<typename T>

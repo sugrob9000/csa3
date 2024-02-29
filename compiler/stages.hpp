@@ -18,7 +18,7 @@ struct Ast {
   struct Number { int32_t value; };
   struct String { std::string value; };
   struct Parens { std::vector<Node> children; };
-  struct Node: One_of<Identifier, Number, String, Parens> {};
+  struct Node: Either<Identifier, Number, String, Parens> {};
 
   std::vector<Parens> sexprs;
 
@@ -51,7 +51,7 @@ struct Ast {
 struct Ir {
   struct Constant { int32_t value; };
   struct Variable { int id; };
-  using Value = One_of<Constant, Variable>;
+  using Value = Either<Constant, Variable>;
 
   enum class Op {
     halt,  // no dest, no src1, no src2
@@ -93,7 +93,5 @@ struct Ir {
 
 struct Hw_image {
   std::vector<uint32_t> words;
-  uint32_t data_break;
-
   static Hw_image from_ir(Ir&&);
 };

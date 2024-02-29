@@ -161,7 +161,7 @@ struct Compiler {
   // They unconditionally evaluate all arguments,
   // and we know what code to generate for them.
 
-  std::optional<Ir::Value> maybe_emit_nary
+  std::optional<Ir::Value> maybe_emit_lassoc
   (std::string_view func_name, std::span<const Ir::Value> inputs) {
     std::optional<Ir::Op> op;
     if (func_name == "+")
@@ -230,7 +230,6 @@ struct Compiler {
     return Ir::Constant(0);
   }
 
-
   // =========================================================================
   // Compilation of high-level langauge constructs.
 
@@ -284,8 +283,8 @@ struct Compiler {
     if (auto binop = maybe_emit_binop(func_name, inputs))
       return *binop;
 
-    if (auto nary = maybe_emit_nary(func_name, inputs))
-      return *nary;
+    if (auto lassoc = maybe_emit_lassoc(func_name, inputs))
+      return *lassoc;
 
     // Kind of intrinsics, but these do evaluate all their arguments
     if (func_name == "progn") {

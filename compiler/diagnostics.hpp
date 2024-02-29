@@ -1,5 +1,3 @@
-// Compiler diagnostics.
-
 #pragma once
 #include <fmt/core.h>
 

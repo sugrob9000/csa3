@@ -44,19 +44,18 @@ auto build_var_lifetimes(int num_variables, std::span<const Ir::Insn> code) {
 }
 
 // The places a variable can be assigned to live in
-using Location = One_of<Address, Register>;
+using Location = Either<Address, Register>;
 
 struct Coloring_result {
   std::vector<Location> locs;
   int num_spilled_variables;
 };
 
-Coloring_result color_variables
-(std::span<const Lifetime> lives, uint32_t mem_base, int num_avail_regs) {
+Coloring_result color_variables(std::span<const Lifetime> lives, uint32_t mem_base) {
   // Sort variables by ascending length of life, putting "hot" ones first
   std::vector<int> vars_by_life_length(lives.size());
   std::iota(vars_by_life_length.begin(), vars_by_life_length.end(), 0);
-  std::sort(vars_by_life_length.begin(), vars_by_life_length.end(),
+  std::ranges::sort(vars_by_life_length,
     [&] (int a, int b) {
       return (lives[a].end - lives[a].start)
            < (lives[b].end - lives[b].start);
@@ -69,14 +68,12 @@ Coloring_result color_variables
     .locs = std::vector<Location>(lives.size()),
     .num_spilled_variables = 0
   };
-  uint32_t next_memory_addr = mem_base;
 
   for (int i = 0; i < lives.size(); i++) {
     int our_id = vars_by_life_length[i];
     auto& our_life = lives[our_id];
 
-    bool taken_storage[num_gp_registers] = {};
-    auto taken = std::span{ taken_storage, taken_storage + num_avail_regs };
+    bool taken[num_gp_registers] = {};
 
     for (int j = 0; j < i; j++) {
       int their_id = vars_by_life_length[j];
@@ -88,11 +85,11 @@ Coloring_result color_variables
         taken[their_reg->id] = true;
     }
 
-    auto it = std::find(taken.begin(), taken.end(), false);
-    if (it != taken.end()) {
-      result.locs[our_id] = Register(it - taken.begin());
+    auto it = std::ranges::find(taken, false);
+    if (it != std::end(taken)) {
+      result.locs[our_id] = Register(it - std::begin(taken));
     } else {
-      result.locs[our_id] = Address(next_memory_addr++);
+      result.locs[our_id] = Address(mem_base++);
       result.num_spilled_variables++;
     }
   }
@@ -119,7 +116,7 @@ enum class Hw_op: uint8_t {
   cmp_gt = 0x9,
   cmp_lt = 0xA,
   jmp = 0xB,
-  jmp_if = 0xC,
+  jif = 0xC,
 };
 
 // 2 registers are reserved for loads of spilled values and stores thereto.
@@ -185,7 +182,7 @@ struct Codegen {
       uint32_t& insn = hw_code[jump_pos];
 
       const auto opcode = static_cast<Hw_op>(insn & 0xF);
-      assert(opcode == Hw_op::jmp || opcode == Hw_op::jmp_if);
+      assert(opcode == Hw_op::jmp || opcode == Hw_op::jif);
 
       uint32_t imm_bit_pos = (opcode == Hw_op::jmp) ? 4 : 10;
       uint32_t ir_offset = insn >> imm_bit_pos;
@@ -223,7 +220,11 @@ struct Codegen {
     hw_code.push_back(static_cast<uint32_t>(op) | (reg.id << 4) | high_bits);
   }
 
-  using Binop_src = One_of<Register, Immediate>;
+  // Follow the "dest, src" convention
+  void emit_load(Register dest, Location src) { emit_memop(Hw_op::load, dest, src); }
+  void emit_store(Location dest, Register src) { emit_memop(Hw_op::store, src, dest); }
+
+  using Binop_src = Either<Register, Immediate>;
   void emit_binop(Hw_op op, Register dest, Binop_src src1, Binop_src src2) {
     const auto convert_src = [] (Binop_src src) -> uint32_t {
       return src.match(
@@ -249,12 +250,12 @@ struct Codegen {
     hw_code.push_back(static_cast<uint32_t>(Hw_op::jmp) | (dest << 4));
   }
 
-  void emit_jmp_if(Register condition, uint32_t dest) {
+  void emit_jif(Register condition, uint32_t dest) {
     if (dest >= (1u << 22))
-      error("Absolute immediate address {:x} is too high for jmp-if", dest);
+      error("Absolute immediate address {:x} is too high for jif", dest);
     remember_jump();
     hw_code.push_back(
-      static_cast<uint32_t>(Hw_op::jmp_if) |
+      static_cast<uint32_t>(Hw_op::jif) |
       (condition.id << 4) |
       (dest << 10)
     );
@@ -268,7 +269,7 @@ struct Codegen {
   // This may require a load if it does not fit into an immediate
   void handle_fetch_const(Register dest, Ir::Constant src) {
     if (is_large_for_binop(src))
-      emit_memop(Hw_op::load, dest, spill_constant(src));
+      emit_load(dest, spill_constant(src));
     else
       emit_binop(Hw_op::add, dest, Immediate(src.value), Immediate(0));
   }
@@ -288,25 +289,25 @@ struct Codegen {
       [] (Ir::Constant) { return 2; }
     );
 
-    const auto src_reg = [&] { return reg_of(src.as<Ir::Variable>()); };
-    const auto src_addr = [&] { return addr_of(src.as<Ir::Variable>()); };
-    const auto src_const = [&] { return src.as<Ir::Constant>(); };
+    const auto reg_of_src = [&] { return reg_of(src.as<Ir::Variable>()); };
+    const auto addr_of_src = [&] { return addr_of(src.as<Ir::Variable>()); };
+    const auto const_of_src = [&] { return src.as<Ir::Constant>(); };
 
     // See table above
     int situation = 1 + src_type + 3 * dest_type;
     switch (situation) {
       using enum Hw_op;
-    case 1: return emit_binop(add, reg_of(dest), src_reg(), Immediate(0));
-    case 2: return emit_memop(load, reg_of(dest), src_addr());
-    case 3: return handle_fetch_const(reg_of(dest), src_const());
-    case 4: return emit_memop(store, src_reg(), addr_of(dest));
+    case 1: return emit_binop(add, reg_of(dest), reg_of_src(), Immediate(0));
+    case 2: return emit_load(reg_of(dest), addr_of_src());
+    case 3: return handle_fetch_const(reg_of(dest), const_of_src());
+    case 4: return emit_store(addr_of(dest), reg_of_src());
     case 5:
-      emit_memop(load, scratch_reg1, src_reg());
-      emit_memop(store, scratch_reg1, addr_of(dest));
+      emit_load(scratch_reg1, reg_of_src());
+      emit_store(addr_of(dest), scratch_reg1);
       return;
     case 6:
-      handle_fetch_const(scratch_reg1, src_const());
-      emit_memop(store, scratch_reg1, addr_of(dest));
+      handle_fetch_const(scratch_reg1, const_of_src());
+      emit_store(addr_of(dest), scratch_reg1);
       return;
     default: unreachable();
     }
@@ -330,32 +331,32 @@ struct Codegen {
       [&] (Ir::Variable var) { return is_spilled(var) ? 2 : 1; }
     );
 
-    const auto addr_imm = [&] { return Address(addr.as<Ir::Constant>().value); };
-    const auto addr_reg = [&] { return reg_of(addr.as<Ir::Variable>()); };
-    const auto addr_mem = [&] { return addr_of(addr.as<Ir::Variable>()); };
+    const auto imm_of_addr = [&] { return Address(addr.as<Ir::Constant>().value); };
+    const auto reg_of_addr = [&] { return reg_of(addr.as<Ir::Variable>()); };
+    const auto addr_of_addr = [&] { return addr_of(addr.as<Ir::Variable>()); };
 
     // See table above
     int situation = 1 + src_type + 3 * dest_type;
     switch (situation) {
       using enum Hw_op;
-    case 1: return emit_memop(load, reg_of(dest), addr_imm());
-    case 2: return emit_memop(load, reg_of(dest), addr_reg());
+    case 1: return emit_load(reg_of(dest), imm_of_addr());
+    case 2: return emit_load(reg_of(dest), reg_of_addr());
     case 3:
-      emit_memop(load, scratch_reg1, addr_mem());
-      emit_memop(load, reg_of(dest), scratch_reg1);
+      emit_load(scratch_reg1, addr_of_addr());
+      emit_load(reg_of(dest), scratch_reg1);
       return;
     case 4:
-      emit_memop(load, scratch_reg1, addr_imm());
-      emit_memop(store, scratch_reg1, addr_of(dest));
+      emit_load(scratch_reg1, imm_of_addr());
+      emit_store(addr_of(dest), scratch_reg1);
       return;
     case 5:
-      emit_memop(load, scratch_reg1, addr_reg());
-      emit_memop(store, scratch_reg1, addr_of(dest));
+      emit_load(scratch_reg1, reg_of_addr());
+      emit_store(addr_of(dest), scratch_reg1);
       return;
     case 6:
-      emit_memop(load, scratch_reg1, addr_mem());
-      emit_memop(load, scratch_reg1, scratch_reg1);
-      emit_memop(store, scratch_reg1, addr_of(dest));
+      emit_load(scratch_reg1, addr_of_addr());
+      emit_load(scratch_reg1, scratch_reg1);
+      emit_store(addr_of(dest), scratch_reg1);
       return;
     default: unreachable();
     }
@@ -370,13 +371,13 @@ struct Codegen {
       [&] (Ir::Constant c) { handle_fetch_const(scratch_reg1, c); },
       [&] (Ir::Variable var) {
         if (is_spilled(var))
-          emit_memop(Hw_op::load, scratch_reg1, addr_of(var));
+          emit_load(scratch_reg1, addr_of(var));
         else
           emit_binop(Hw_op::add, scratch_reg1, reg_of(var), Immediate(0));
       }
     );
 
-    Register addr_reg = addr.match(
+    Register reg_of_addr = addr.match(
       [&] (Ir::Constant c) {
         handle_fetch_const(scratch_reg2, c);
         return scratch_reg2;
@@ -384,13 +385,12 @@ struct Codegen {
       [&] (Ir::Variable var) {
         if (!is_spilled(var))
           return reg_of(var);
-        emit_memop(Hw_op::load, scratch_reg2, addr_of(var));
+        emit_load(scratch_reg2, addr_of(var));
         return scratch_reg2;
       }
     );
 
-    // Perform the store
-    emit_memop(Hw_op::store, scratch_reg1, addr_reg);
+    emit_store(reg_of_addr, scratch_reg1);
   }
 
   void handle_binop(Ir::Insn& insn) {
@@ -413,13 +413,13 @@ struct Codegen {
         [&] (Ir::Variable var) -> Binop_src {
           if (!is_spilled(var))
             return reg_of(var);
-          emit_memop(Hw_op::load, scratch, addr_of(var));
+          emit_load(scratch, addr_of(var));
           return scratch;
         },
         [&] (Ir::Constant c) -> Binop_src {
           if (!is_large_for_binop(c))
             return Immediate(c.value);
-          emit_memop(Hw_op::load, scratch, spill_constant(c));
+          emit_load(scratch, spill_constant(c));
           return scratch;
         }
       );
@@ -430,7 +430,7 @@ struct Codegen {
 
     if (is_spilled(insn.dest)) {
       emit_binop(op, scratch_reg1, src1, src2);
-      emit_memop(Hw_op::store, scratch_reg1, addr_of(insn.dest));
+      emit_store(addr_of(insn.dest), scratch_reg1);
     } else {
       emit_binop(op, reg_of(insn.dest), src1, src2);
     }
@@ -444,10 +444,10 @@ struct Codegen {
       },
       [&] (Ir::Variable var) {
         if (is_spilled(var)) {
-          emit_memop(Hw_op::load, scratch_reg1, addr_of(var));
-          emit_jmp_if(scratch_reg1, where.addr);
+          emit_load(scratch_reg1, addr_of(var));
+          emit_jif(scratch_reg1, where.addr);
         } else {
-          emit_jmp_if(reg_of(var), where.addr);
+          emit_jif(reg_of(var), where.addr);
         }
       }
     );
@@ -478,8 +478,7 @@ Hw_image Hw_image::from_ir(Ir&& ir) {
 
   codegen.use_coloring(color_variables(
     build_var_lifetimes(ir.num_variables, code),
-    codegen.static_data.size(),
-    num_gp_registers
+    codegen.static_data.size()
   ));
 
   // Perform code generation
@@ -489,7 +488,6 @@ Hw_image Hw_image::from_ir(Ir&& ir) {
 
   // Gather result
   Hw_image result;
-  result.data_break = codegen.static_data.size();
   result.words = std::move(codegen.static_data);
   result.words.insert(result.words.end(), codegen.hw_code.begin(), codegen.hw_code.end());
   return result;

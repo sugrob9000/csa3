@@ -18,7 +18,7 @@ struct Lexer {
   struct Number { int32_t value; };
   struct String { std::string value; };
 
-  using Token = One_of<
+  using Token = Either<
     Opening_paren,
     Closing_paren,
     Identifier,
@@ -85,29 +85,27 @@ struct Lexer {
       int32_t number;
       auto [ptr, ec] = std::from_chars(word.data(), word.data() + word.size(), number);
       if (ec != std::errc{}) {
-        error("Bad integer literal '{}'. charconv says '{}'",
-            word, std::make_error_code(ec).message());
+        error(
+          "Bad integer literal '{}'. charconv says '{}'",
+          word,
+          std::make_error_code(ec).message()
+        );
       }
-
       return Number(number);
     } else {
-      // This is just a identifier (function or binding name, etc.)
+      // This is just an identifier
       return Identifier(std::move(word));
     }
   }
 
   Token consume_string_literal() {
-    assert(*peek() == '"');
     consume_expect('"');
-
-    std::string literal;
-    while (auto c = peek()) {
+    for (std::string literal; auto c = peek(); ) {
       consume_expect(*c);
       if (*c == '"')
         return String(std::move(literal));
       literal.push_back(*c);
     }
-
     error("EOF before closing string literal");
   }
 

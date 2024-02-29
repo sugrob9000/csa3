@@ -34,7 +34,7 @@ enum class Opcode {
   cmp_gt = 0x9,
   cmp_lt = 0xA,
   jmp = 0xB,
-  jmp_if = 0xC,
+  jif = 0xC,
 };
 
 Processor::Alu::Op binop_to_alu(Opcode opcode) {
@@ -336,7 +336,7 @@ auto Processor::decode_insn(u32 insn) -> Control_signals {
     result.imm1 = insn >> 4;
     break;
   }
-  case Opcode::jmp_if: {
+  case Opcode::jif: {
     result.sel_src1_regid = (insn >> 4) & 0x3F;
     result.sel_fetch_head = Fetch::Head_mux::from_jmp;
     result.doing_jif = true;
