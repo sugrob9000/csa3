@@ -63,11 +63,11 @@ Processor::Processor(std::span<const u32> image) {
   mem.memory.assign(image.begin(), image.end());
 
   { // Fiddle with processor state into beginning execution correctly
-    // Will get incremented to 0 before fetching
-    fetch.addr = -1;
+    fetch.addr = -1; // Will get incremented to 0 before fetching
 
-    // Prime the pipeline with NOPs
-    constexpr u32 encoded_nop = 0x3; // ad r0, r0, r0
+    // Prime the pipeline with "add r0, 0, 0".
+    // Not strictly a nop, but it is in this context
+    constexpr u32 encoded_nop = 0x3;
     fetch.fetched_insn = encoded_nop;
     decoder_in = encoded_nop;
     mem.rdata = encoded_nop;

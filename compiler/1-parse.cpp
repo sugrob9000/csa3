@@ -1,10 +1,14 @@
 #include "diagnostics.hpp"
 #include "stages.hpp"
 #include "util.hpp"
+#include <cassert>
+#include <cctype>
 #include <charconv>
 #include <cstdint>
 #include <iostream>
 #include <optional>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {

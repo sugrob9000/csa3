@@ -1,9 +1,12 @@
 #include "diagnostics.hpp"
 #include "stages.hpp"
-#include <algorithm>
+#include <cassert>
+#include <cstddef>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <unordered_map>
+#include <utility>
 
 namespace {
 
@@ -147,6 +150,8 @@ struct Compiler {
         error("Syntax: (while COND-EXPR LOOP-EXPR)");
       return emit_while(args[0], args[1]);
     } else if (func_name == "alloc-static") {
+      // Allocate static memory. One allocation is made *per appearance*
+      // in code, however many times execution reaches it.
       if (args.size() != 1 || !args[0].is<Ast::Number>())
         error("Syntax: (alloc-static CONSTANT-AMOUNT)");
       auto address = int32_t(static_data.size());
@@ -208,6 +213,17 @@ struct Compiler {
   }
 
   Ir::Constant emit_print_str(Ir::Value str) {
+    // Closest we come to wanting subroutines in the IR/ISA and
+    // functions in the language. Here emits code equivalent to:
+    //
+    //   pointer = str+1;
+    //   counter = *str;
+    //   while (counter) {
+    //     MMIO = *pointer;
+    //     ++pointer;
+    //     --counter;
+    //   }
+
     Ir::Variable counter = emit_load(new_var(), str);
     Ir::Variable pointer = emit(Ir::Op::add, new_var(), str, Ir::Constant(1));
 
@@ -323,8 +339,7 @@ Ir Ir::compile(Ast& ast) {
   for (auto& expr: ast.sexprs)
     compiler.compile_parens(expr);
 
-  // Add a final halt
-  compiler.emit(Ir::Op::halt, {}, {}, {});
+  compiler.emit(Ir::Op::halt, {}, {}, {}); // A final halt
 
   return {
     .code = std::move(compiler.emitted_code),

@@ -1,7 +1,10 @@
 #include "diagnostics.hpp"
 #include "stages.hpp"
 #include <algorithm>
+#include <cassert>
+#include <limits>
 #include <numeric>
+#include <ranges>
 #include <span>
 #include <utility>
 
@@ -13,9 +16,32 @@ struct Immediate { uint32_t value; };
 struct Address { uint32_t addr; };
 
 // ===========================================================================
-// Register coloring.
+// Register allocation.
+//
+// XXX  The algorithm is broken. It considers the variables' lifetimes as
+// conflicting only if their regions between first and last "mention" intersect.
+// This means that we might miscompile code such as:
+//
+//           X <- 0
+//           C <- 3
+//     loop: X <- X + 1
+//           output X
+//           Y <- 100
+//           C <- C - 1
+//           if C > 0 jump to `loop`
+//           output Y
+//
+// to assign X and Y to the same register and output "1, 101, 101, 100" instead of "1, 2, 3, 100".
 
+
+// 2 registers are reserved for loads of spilled values and stores thereto.
+// An instruction might have had both its source operands spilled, so we need 2.
+constexpr Register scratch_reg1 = { 62 };
+constexpr Register scratch_reg2 = { 63 };
+
+// The remaining registers [0...61] are available for automatic assignment
 constexpr int num_gp_registers = 62;
+
 
 // A variable is considered alive between its first and last usage, inclusive
 struct Lifetime {
@@ -24,14 +50,14 @@ struct Lifetime {
 };
 
 auto build_var_lifetimes(int num_variables, std::span<const Ir::Insn> code) {
-	std::vector<Lifetime> result(num_variables);
+  std::vector<Lifetime> result(num_variables);
 
   for (int insn_id = 0; insn_id < code.size(); insn_id++) {
     const auto maybe_update_lifetime = [&] (Ir::Value value) {
       if (auto var = value.maybe_as<Ir::Variable>()) {
-				auto& life = result[var->id];
-				life.start = std::min(life.start, insn_id);
-				life.end = std::max(life.end, insn_id);
+        auto& life = result[var->id];
+        life.start = std::min(life.start, insn_id);
+        life.end = std::max(life.end, insn_id);
       }
     };
     auto& insn = code[insn_id];
@@ -40,8 +66,9 @@ auto build_var_lifetimes(int num_variables, std::span<const Ir::Insn> code) {
     if (insn.has_valid_src2()) maybe_update_lifetime(insn.src2);
   }
 
-	return result;
+  return result;
 }
+
 
 // The places a variable can be assigned to live in
 using Location = Either<Address, Register>;
@@ -55,11 +82,12 @@ Coloring_result color_variables(std::span<const Lifetime> lives, uint32_t mem_ba
   // Sort variables by ascending length of life, putting "hot" ones first
   std::vector<int> vars_by_life_length(lives.size());
   std::iota(vars_by_life_length.begin(), vars_by_life_length.end(), 0);
-  std::ranges::sort(vars_by_life_length,
+  std::ranges::sort(
+    vars_by_life_length,
     [&] (int a, int b) {
-      return (lives[a].end - lives[a].start)
-           < (lives[b].end - lives[b].start);
-    });
+      return (lives[a].end - lives[a].start) < (lives[b].end - lives[b].start);
+    }
+  );
 
   // Greedily assign a register to each variable. "Hot" variables will go first,
   // becoming more likely to grab registers (and because their life is shorter,
@@ -119,11 +147,6 @@ enum class Hw_op: uint8_t {
   jif = 0xC,
 };
 
-// 2 registers are reserved for loads of spilled values and stores thereto.
-// An instruction might have had both its source operands spilled, so we need 2.
-constexpr Register scratch_reg1 = { 62 };
-constexpr Register scratch_reg2 = { 63 };
-
 struct Codegen {
   std::vector<uint32_t> static_data;
   std::vector<uint32_t> hw_code;
@@ -182,6 +205,7 @@ struct Codegen {
       uint32_t& insn = hw_code[jump_pos];
 
       const auto opcode = static_cast<Hw_op>(insn & 0xF);
+
       assert(opcode == Hw_op::jmp || opcode == Hw_op::jif);
 
       uint32_t imm_bit_pos = (opcode == Hw_op::jmp) ? 4 : 10;
@@ -199,9 +223,6 @@ struct Codegen {
   // =========================================================================
   // Emitting HW instructions
 
-  constexpr static uint32_t encoded_nop = 0x3 | (1u << 10);
-
-  // Abuses the meaning of `Location`, but it has the tags we need
   void emit_memop(Hw_op op, Register reg, Location addr) {
     assert(op == Hw_op::load || op == Hw_op::store);
     uint32_t high_bits = addr.match(
@@ -214,9 +235,17 @@ struct Codegen {
         return mem.addr << 11;
       }
     );
-    // HACK: Add nops before every memop
-    hw_code.push_back(encoded_nop);
-    hw_code.push_back(encoded_nop);
+
+    {
+      // HACK: Add 2 nops before every memop.
+      // The processor goes haywire when a memop is within 1 insn forward from
+      // the target of a jump, because both jumps and memops need to stall fetch.
+      // This does not cover *all* cases, but enough for the existing tests to pass.
+      constexpr uint32_t encoded_nop = 0x3 | (1u << 10); // add r0, r0, 0
+      hw_code.push_back(encoded_nop);
+      hw_code.push_back(encoded_nop);
+    }
+
     hw_code.push_back(static_cast<uint32_t>(op) | (reg.id << 4) | high_bits);
   }
 
@@ -226,7 +255,7 @@ struct Codegen {
 
   using Binop_src = Either<Register, Immediate>;
   void emit_binop(Hw_op op, Register dest, Binop_src src1, Binop_src src2) {
-    const auto convert_src = [] (Binop_src src) -> uint32_t {
+    const auto encode_operand = [] (Binop_src src) -> uint32_t {
       return src.match(
         [] (Register reg) { return 1u | (reg.id << 1); },
         [] (Immediate imm) {
@@ -238,8 +267,8 @@ struct Codegen {
     hw_code.push_back(
       static_cast<uint32_t>(op) |
       (dest.id << 4) |
-      (convert_src(src1) << 10) |
-      (convert_src(src2) << 21)
+      (encode_operand(src1) << 10) |
+      (encode_operand(src2) << 21)
     );
   }
 
@@ -268,6 +297,7 @@ struct Codegen {
   // Put a constant into a register.
   // This may require a load if it does not fit into an immediate
   void handle_fetch_const(Register dest, Ir::Constant src) {
+    // Could cram even bigger constants into immediates by *actually using* add/mul
     if (is_large_for_binop(src))
       emit_load(dest, spill_constant(src));
     else
@@ -275,6 +305,10 @@ struct Codegen {
   }
 
   void handle_mov(Ir::Variable dest, Ir::Value src) {
+    const auto reg_of_src = [&] { return reg_of(src.as<Ir::Variable>()); };
+    const auto addr_of_src = [&] { return addr_of(src.as<Ir::Variable>()); };
+    const auto const_of_src = [&] { return src.as<Ir::Constant>(); };
+
     // --- Situation ---  ---- What do ----
     // 1.  reg <- reg     add R,0
     // 2.  reg <- mem     load
@@ -282,19 +316,13 @@ struct Codegen {
     // 4.  mem <- reg     store
     // 5.  mem <- mem     load + store
     // 6.  mem <- const   fetch_const + store
-
     int dest_type = is_spilled(dest) ? 1 : 0;
     int src_type = src.match(
       [&] (Ir::Variable var) { return is_spilled(var) ? 1 : 0; },
       [] (Ir::Constant) { return 2; }
     );
-
-    const auto reg_of_src = [&] { return reg_of(src.as<Ir::Variable>()); };
-    const auto addr_of_src = [&] { return addr_of(src.as<Ir::Variable>()); };
-    const auto const_of_src = [&] { return src.as<Ir::Constant>(); };
-
-    // See table above
     int situation = 1 + src_type + 3 * dest_type;
+
     switch (situation) {
       using enum Hw_op;
     case 1: return emit_binop(add, reg_of(dest), reg_of_src(), Immediate(0));
@@ -314,6 +342,12 @@ struct Codegen {
   }
 
   void handle_load(Ir::Variable dest, Ir::Value addr) {
+    // There is no provision for constant pointers which are too large,
+    // those will just cause broken codegen :(
+    const auto imm_of_addr = [&] { return Address(addr.as<Ir::Constant>().value); };
+    const auto reg_of_addr = [&] { return reg_of(addr.as<Ir::Variable>()); };
+    const auto addr_of_addr = [&] { return addr_of(addr.as<Ir::Variable>()); };
+
     // ---- Situation ----  ---- What do ----
     // 1. reg <- mem[imm]   load imm
     // 2. reg <- mem[reg]   load reg
@@ -321,22 +355,13 @@ struct Codegen {
     // 4. mem <- mem[imm]   load imm + store imm
     // 5. mem <- mem[reg]   load reg + store imm
     // 6. mem <- mem[mem]   load imm + load reg + store imm
-
-    // There is no provision for pointers which are too large,
-    // those will just cause broken codegen :(
-
     int dest_type = is_spilled(dest) ? 1 : 0;
     int src_type = addr.match(
       [] (Ir::Constant) { return 0; },
       [&] (Ir::Variable var) { return is_spilled(var) ? 2 : 1; }
     );
-
-    const auto imm_of_addr = [&] { return Address(addr.as<Ir::Constant>().value); };
-    const auto reg_of_addr = [&] { return reg_of(addr.as<Ir::Variable>()); };
-    const auto addr_of_addr = [&] { return addr_of(addr.as<Ir::Variable>()); };
-
-    // See table above
     int situation = 1 + src_type + 3 * dest_type;
+
     switch (situation) {
       using enum Hw_op;
     case 1: return emit_load(reg_of(dest), imm_of_addr());
@@ -366,7 +391,7 @@ struct Codegen {
     // To reduce compiler complexity, we never emit store-imm for an IR store,
     // even if addr is a small constant...
 
-    // Get the stored value into scratch_reg1 anyhow
+    // Put the stored value into scratch_reg1
     src.match(
       [&] (Ir::Constant c) { handle_fetch_const(scratch_reg1, c); },
       [&] (Ir::Variable var) {
@@ -377,6 +402,7 @@ struct Codegen {
       }
     );
 
+    // Put the destination address into a register
     Register reg_of_addr = addr.match(
       [&] (Ir::Constant c) {
         handle_fetch_const(scratch_reg2, c);
@@ -408,7 +434,9 @@ struct Codegen {
       }
     }();
 
-    const auto convert_src = [&] (Register scratch, Ir::Value ir_src) {
+    // Get an operand from IR form (arbitrary constant or abstract runtime value)
+    // into a HWop-ready form (width-restricted immediate or regsiter, perhaps loaded into)
+    const auto convert_operand = [&] (Register scratch, Ir::Value ir_src) {
       return ir_src.match(
         [&] (Ir::Variable var) -> Binop_src {
           if (!is_spilled(var))
@@ -425,8 +453,8 @@ struct Codegen {
       );
     };
 
-    Binop_src src1 = convert_src(scratch_reg1, insn.src1);
-    Binop_src src2 = convert_src(scratch_reg2, insn.src2);
+    Binop_src src1 = convert_operand(scratch_reg1, insn.src1);
+    Binop_src src2 = convert_operand(scratch_reg2, insn.src2);
 
     if (is_spilled(insn.dest)) {
       emit_binop(op, scratch_reg1, src1, src2);

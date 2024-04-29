@@ -5,3 +5,4 @@ performance-*
 readability-function-cognitive-complexity
 -bugprone-easily-swappable-parameters
 -bugprone-unchecked-optional-access
+-performance-enum-size

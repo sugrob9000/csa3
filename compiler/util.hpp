@@ -1,6 +1,5 @@
 #pragma once
 #include <cassert>
-#include <optional>
 #include <variant>
 
 // A (very) poor man's sum type with matching:

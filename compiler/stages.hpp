@@ -2,7 +2,6 @@
 #include "util.hpp"
 #include <cstdint>
 #include <iosfwd>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -53,7 +52,7 @@ struct Ir {
   struct Variable { int id; };
   using Value = Either<Constant, Variable>;
 
-  enum class Op {
+  enum class Op: int {
     halt,  // no dest, no src1, no src2
     mov,   // no src2
     load,  // no src2
