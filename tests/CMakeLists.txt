@@ -1,5 +1,5 @@
 function(create_test name proc-input)
-	message(STATUS "Adding test ${name}")
+  message(STATUS "Adding test ${name}")
 
   add_test(
     NAME ${name}-compile

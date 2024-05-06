@@ -83,18 +83,17 @@ void Processor::print_state() {
   LOG("  Mem: addr={:#x}, wdata={:#x}, rdata={:#x}", mem.addr, mem.wdata, mem.rdata);
 
   {
-    bool all_zero = true;
+    int num_nonzero = 0;
     LOG_NOLN("  Reg:");
     for (int i = 0; i < 64; i++) {
       if (reg.registers[i] != 0) {
         LOG_NOLN(" r{}={:#x};", i, reg.registers[i]);
-        all_zero = false;
+        num_nonzero++;
       }
     }
-    if (all_zero)
-      LOG(" (all 0)");
-    else
-      LOG(" (others 0)");
+    if (num_nonzero != 64)
+      LOG_NOLN(" ({} 0)", num_nonzero == 0 ? "all" : "others");
+    LOG("");
   }
 
   LOG("  Fetch head={:#x} insn={:#x}", fetch.addr, fetch.fetched_insn);

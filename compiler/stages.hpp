@@ -52,7 +52,7 @@ struct Ir {
   struct Variable { int id; };
   using Value = Either<Constant, Variable>;
 
-  enum class Op: int {
+  enum class Op {
     halt,  // no dest, no src1, no src2
     mov,   // no src2
     load,  // no src2
